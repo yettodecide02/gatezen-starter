@@ -22,7 +22,7 @@ export default function Visitors() {
     catch { return { id:"u1", role:"resident" }; }
   }, []);
 
-  const [tab, setTab] = useState("resident"); // resident | staff
+  const [tab, setTab] = useState("resident"); 
   const [list, setList] = useState([]);
   const [statusFilter, setStatusFilter] = useState("");
   const [from, setFrom] = useState(isoNowLocalDate());
@@ -189,25 +189,7 @@ export default function Visitors() {
           </div>
 
           <div className="list">
-            {list.length === 0 && <div className="empty">No records.</div>}
-            {list.map(v => (
-              <div key={v.id} className="list-item">
-                <div className="grow">
-                  <div className="title">{v.name} <span className="sub">({v.phone})</span></div>
-                  <div className="sub">
-                    Expected: {new Date(v.expectedAt).toLocaleString()} • {v.purpose} {v.vehicle?`• ${v.vehicle}`:""}
-                  </div>
-                </div>
-                <div className="chip"><FiActivity/> {v.status.replace("_"," ")}</div>
-                {/* Quick actions */}
-                <div className="row">
-                  <button className="btn outline" onClick={()=>setStatus(v.id,"arrived","Arrived at gate")}>Arrived</button>
-                  <button className="btn outline" onClick={()=>setStatus(v.id,"checked_in","Checked in")}>Check-in</button>
-                  <button className="btn outline" onClick={()=>setStatus(v.id,"checked_out","Checked out")}>Check-out</button>
-                  <button className="btn" onClick={()=>setStatus(v.id,"denied","Access denied")}><FiXCircle/> Deny</button>
-                </div>
-              </div>
-            ))}
+            
           </div>
         </div>
       )}

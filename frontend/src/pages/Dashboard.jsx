@@ -174,7 +174,7 @@ export default function Dashboard() {
       </div>
 
       {/* Right Column: Notifications */}
-      <div className="card">
+      <div className="card span-2">
         <SectionHeader icon={<FiAlertTriangle />} title="Notifications" />
         {notifications.length === 0 && !loading && (
           <div className="empty">You’re all caught up.</div>
@@ -194,7 +194,7 @@ export default function Dashboard() {
       </div>
 
       {/* Charts */}
-      <div className="card">
+      <div className="card span-2">
         <SectionHeader icon={<FiCreditCard />} title="Payments Summary" />
         <div className="chart-wrap">
           <ResponsiveContainer width="100%" height={220}>
@@ -225,7 +225,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="card">
+      <div className="card span-2">
         <SectionHeader icon={<FiTool />} title="Maintenance Status" />
         <div className="chart-wrap">
           <ResponsiveContainer width="100%" height={220}>

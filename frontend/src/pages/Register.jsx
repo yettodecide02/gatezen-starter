@@ -1,33 +1,76 @@
-import { useState } from "react";
+import axios from "axios";
+import { useEffect, useState } from "react";
+import {
+  FiEye,
+  FiEyeOff,
+  FiLock,
+  FiLogIn,
+  FiMail,
+  FiUser,
+} from "react-icons/fi";
 import { Link, useNavigate } from "react-router-dom";
-import { api } from "../api";
-import CaptchaCheckbox from "../components/CaptchaCheckbox";
+import supabase from "../lib/supabase";
+import { isAuthed, setUser } from "../lib/auth";
+import GoogleSignin from "../components/GoogleSignin";
 
 export default function Register() {
   const navigate = useNavigate();
-  const [form, setForm] = useState({
-    name: "",
-    email: "",
-    password: "",
-    role: "resident",
-  });
-  const [captcha, setCaptcha] = useState(false);
+
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const [ok, setOk] = useState("");
 
-  const change = (k, v) => setForm(s => ({ ...s, [k]: v }));
+  useEffect(() => {
+    if (isAuthed()) navigate("/dashboard");
+  }, [navigate]);
 
   const submit = async (e) => {
     e.preventDefault();
-    setErr(""); setOk(""); setLoading(true);
+    setErr("");
+    setLoading(true);
     try {
-      const res = await api("/auth/register", {
-        method: "POST",
-        body: JSON.stringify({ ...form, captchaAccepted: captcha }),
+      const existingUser = await axios.get(
+        import.meta.env.VITE_BACKEND_URL + "/existing-user",
+        { params: { email } }
+      );
+
+      if (existingUser.data.exists) {
+        setErr("User with this email already exists. Please login.");
+        return;
+      }
+
+      const supRes = await supabase.auth.signUp({
+        email,
+        password,
       });
-      setOk("Registered! You can sign in now.");
-      setTimeout(()=> navigate("/", { replace: true }), 700);
+
+      if (!supRes?.data?.user) {
+        setErr("User creation failed");
+        return;
+      }
+
+      const res = await axios.post(
+        import.meta.env.VITE_BACKEND_URL + "/signup",
+        {
+          name: name,
+          email: email,
+          password: password,
+        }
+      );
+
+      if (res.status !== 200) {
+        setErr("User registration failed");
+        return;
+      }
+
+      localStorage.setItem("token", res.data.jwttoken);
+      if (res.data.user) setUser(res.data.user);
+      navigate("/dashboard", { replace: true });
+      setUser(res.user);
+      navigate("/dashboard");
     } catch (e) {
       setErr(e?.message || "Registration failed");
     } finally {
@@ -42,30 +85,74 @@ export default function Register() {
           <div className="logo-badge">GZ</div>
           <div>
             <div className="brand-name">GateZen</div>
-            <div className="brand-sub">Create your account</div>
+            <div className="brand-sub">Community Portal</div>
           </div>
         </div>
 
         <form onSubmit={submit} className="auth-form">
-          <input className="input" placeholder="Full name" value={form.name} onChange={(e)=>change('name', e.target.value)} required />
-          <input className="input" type="email" placeholder="Email address" value={form.email} onChange={(e)=>change('email', e.target.value)} required />
-          <input className="input" type="password" placeholder="Password" value={form.password} onChange={(e)=>change('password', e.target.value)} required />
+          <label className="field">
+            <span className="field-icon">
+              <FiUser />
+            </span>
+            <input
+              type="text"
+              placeholder="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              autoFocus
+            />
+          </label>
 
-          <select className="input" value={form.role} onChange={(e)=>change('role', e.target.value)}>
-            <option value="resident">Resident</option>
-            <option value="owner">Owner</option>
-            <option value="staff">Staff</option>
-          </select>
+          <label className="field">
+            <span className="field-icon">
+              <FiMail />
+            </span>
+            <input
+              type="email"
+              placeholder="Email address"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoFocus
+            />
+          </label>
 
-          <CaptchaCheckbox checked={captcha} onChange={setCaptcha} />
+          <label className="field">
+            <span className="field-icon">
+              <FiLock />
+            </span>
+            <input
+              type={showPw ? "text" : "password"}
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+            <button
+              type="button"
+              className="pw-toggle"
+              onClick={() => setShowPw(!showPw)}
+            >
+              {showPw ? <FiEyeOff /> : <FiEye />}
+            </button>
+          </label>
 
-          <button className="auth-btn" disabled={loading}>{loading ? "Creating…" : "Create account"}</button>
+          <button className="auth-btn" type="submit" disabled={loading}>
+            {loading ? (
+              "Signing in…"
+            ) : (
+              <>
+                <FiLogIn /> Sign Up
+              </>
+            )}
+          </button>
+          <GoogleSignin />
 
           {err && <div className="auth-error">{err}</div>}
-          {ok && <div className="auth-success">{ok}</div>}
 
           <div className="auth-foot muted">
-            Already have an account? <Link to="/">Sign in</Link>
+            Already have an account? <Link to="/">Log in</Link>
           </div>
         </form>
       </div>
