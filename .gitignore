@@ -1,0 +1,31 @@
+# Node / JS
+node_modules/
+npm-debug.log*
+yarn.lock
+pnpm-lock.yaml
+
+# Builds
+dist/
+build/
+coverage/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# Editors/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Capacitor / native (if you re-add later)
+android/
+ios/
+
+# Logs & misc
+*.log
+*.log.*
+*.tmp
+*.cache
