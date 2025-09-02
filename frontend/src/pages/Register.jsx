@@ -9,7 +9,6 @@ import {
   FiUser,
 } from "react-icons/fi";
 import { Link, useNavigate } from "react-router-dom";
-import supabase from "../lib/supabase";
 import { isAuthed, setUser } from "../lib/auth";
 import GoogleSignin from "../components/GoogleSignin";
 
@@ -42,16 +41,6 @@ export default function Register() {
         return;
       }
 
-      const supRes = await supabase.auth.signUp({
-        email,
-        password,
-      });
-
-      if (!supRes?.data?.user) {
-        setErr("User creation failed");
-        return;
-      }
-
       const res = await axios.post(
         import.meta.env.VITE_BACKEND_URL + "/signup",
         {
@@ -67,10 +56,10 @@ export default function Register() {
       }
 
       localStorage.setItem("token", res.data.jwttoken);
+      
       if (res.data.user) setUser(res.data.user);
       navigate("/dashboard", { replace: true });
-      setUser(res.user);
-      navigate("/dashboard");
+
     } catch (e) {
       setErr(e?.message || "Registration failed");
     } finally {

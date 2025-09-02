@@ -1,16 +1,36 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { api } from "../api";
+import axios from "axios";
 import {
-  FiBell, FiCalendar, FiCreditCard, FiTool, FiAlertTriangle, FiCheckCircle,
+  FiBell,
+  FiCalendar,
+  FiCreditCard,
+  FiTool,
+  FiAlertTriangle,
+  FiCheckCircle,
 } from "react-icons/fi";
 import StatCard from "../components/StatCard";
 import SectionHeader from "../components/SectionHeader";
 import {
-  PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
-  BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  PieChart,
+  Pie,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
 } from "recharts";
 
-const COLORS = ["#6366f1", "#10b981", "#f59e0b", "#ef4444", "#14b8a6", "#8b5cf6"];
+const COLORS = [
+  "#6366f1",
+  "#10b981",
+  "#f59e0b",
+  "#ef4444",
+  "#14b8a6",
+  "#8b5cf6",
+];
 
 export default function Dashboard() {
   const [ann, setAnn] = useState([]);
@@ -19,65 +39,80 @@ export default function Dashboard() {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Load data
+  const token = localStorage.getItem("token");
+  const user = localStorage.getItem("user");
+
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
-        const [a, p, m, b] = await Promise.all([
-          api("/announcements"),
-          api("/payments"),
-          api("/maintenance"),
-          api("/bookings"),
-        ]);
+        setLoading(true);
+        const res = await axios.get(import.meta.env.VITE_BACKEND_URL + "/dashboard", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          params: { userId: user.id },
+        });
         if (!mounted) return;
-        setAnn(a || []);
-        setPayments(p || []);
-        setMaintenance(m || []);
-        setBookings(b || []);
+        setAnn(res.data.announcements || []);
+        setPayments(res.data.payments || []);
+        setMaintenance(res.data.maintenance || []);
+        setBookings(res.data.bookings || []);
+      } catch (e) {
+        console.error("Error loading dashboard data:", e);
       } finally {
-        if (mounted) setLoading(false);
+        setLoading(false);
       }
     })();
     return () => (mounted = false);
-  }, []);
+  }, [token, user.id]);
 
-  // --- Computed metrics ---
   const totalDue = useMemo(
-    () => payments.filter(p => p.status === "due").reduce((s, x) => s + (Number(x.amount) || 0), 0),
+    () =>
+      payments
+        .filter((p) => p.status === "pending")
+        .reduce((s, x) => s + (Number(x.amount) || 0), 0),
     [payments]
   );
   const totalPaid = useMemo(
-    () => payments.filter(p => p.status === "paid").reduce((s, x) => s + (Number(x.amount) || 0), 0),
+    () =>
+      payments
+        .filter((p) => p.status === "completed")
+        .reduce((s, x) => s + (Number(x.amount) || 0), 0),
     [payments]
   );
 
   const maintCounts = useMemo(() => {
     const by = { submitted: 0, in_progress: 0, resolved: 0, other: 0 };
-    maintenance.forEach(t => {
+    maintenance.forEach((t) => {
       const s = (t.status || "").toLowerCase();
       if (s === "submitted") by.submitted++;
       else if (s === "in_progress" || s === "in-progress") by.in_progress++;
-      else if (s === "resolved" || s === "closed" || s === "done") by.resolved++;
+      else if (s === "resolved" || s === "closed" || s === "done")
+        by.resolved++;
       else by.other++;
     });
     return by;
   }, [maintenance]);
 
-  const recentAnnouncements = useMemo(() =>
-    [...ann].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 4)
-  , [ann]);
+  const recentAnnouncements = useMemo(
+    () =>
+      [...ann]
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .slice(0, 4),
+    [ann]
+  );
 
-  // Treat bookings as events (if your booking has `date` use it; otherwise fallback to createdAt)
   const upcomingEvents = useMemo(() => {
     const normalizeDate = (x) => new Date(x.date || x.createdAt || Date.now());
     return [...bookings]
-      .filter(b => ["pending", "approved"].includes((b.status || "").toLowerCase()))
+      .filter((b) =>
+        ["pending", "approved"].includes((b.status || "").toLowerCase())
+      )
       .sort((a, b) => normalizeDate(a) - normalizeDate(b))
       .slice(0, 4);
   }, [bookings]);
 
-  // Simple notification rules
   const notifications = useMemo(() => {
     const notes = [];
     if (totalDue > 0) {
@@ -107,18 +142,22 @@ export default function Dashboard() {
     return notes;
   }, [totalDue, maintCounts, recentAnnouncements]);
 
-  // Chart data
-  const paymentsDonut = useMemo(() => ([
-    { name: "Paid", value: totalPaid },
-    { name: "Due", value: totalDue },
-  ]), [totalPaid, totalDue]);
+  const paymentsDonut = useMemo(
+    () => [
+      { name: "Paid", value: totalPaid },
+      { name: "Due", value: totalDue },
+    ],
+    [totalPaid, totalDue]
+  );
 
-  const maintenanceBar = useMemo(() => ([
-    { status: "Submitted", count: maintCounts.submitted },
-    { status: "In Progress", count: maintCounts.in_progress },
-    { status: "Resolved", count: maintCounts.resolved },
-    { status: "Other", count: maintCounts.other },
-  ]), [maintCounts]);
+  const maintenanceBar = useMemo(
+    () => [
+      { status: "Submitted", count: maintCounts.submitted },
+      { status: "In Progress", count: maintCounts.in_progress },
+      { status: "Resolved", count: maintCounts.resolved },
+    ],
+    [maintCounts]
+  );
 
   return (
     <div className="dash-grid">
@@ -163,10 +202,12 @@ export default function Dashboard() {
           <div className="empty">No announcements yet.</div>
         )}
         <ul className="list">
-          {recentAnnouncements.map(a => (
+          {recentAnnouncements.map((a) => (
             <li key={a.id} className="list-row">
               <div className="list-title">{a.title}</div>
-              <div className="list-sub">{new Date(a.createdAt).toLocaleString()}</div>
+              <div className="list-sub">
+                {new Date(a.createdAt).toLocaleString()}
+              </div>
               <div className="list-body">{a.body}</div>
             </li>
           ))}
@@ -208,7 +249,10 @@ export default function Dashboard() {
                 dataKey="value"
               >
                 {paymentsDonut.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  <Cell
+                    key={`cell-${index}`}
+                    fill={COLORS[index % COLORS.length]}
+                  />
                 ))}
               </Pie>
             </PieChart>
@@ -216,7 +260,10 @@ export default function Dashboard() {
           <div className="legend">
             {paymentsDonut.map((d, i) => (
               <div className="legend-row" key={i}>
-                <span className="dot" style={{ background: COLORS[i % COLORS.length] }} />
+                <span
+                  className="dot"
+                  style={{ background: COLORS[i % COLORS.length] }}
+                />
                 <span>{d.name}</span>
                 <b>₹ {d.value}</b>
               </div>
@@ -240,7 +287,10 @@ export default function Dashboard() {
           <div className="legend">
             {maintenanceBar.map((d, i) => (
               <div className="legend-row" key={i}>
-                <span className="dot" style={{ background: COLORS[i % COLORS.length] }} />
+                <span
+                  className="dot"
+                  style={{ background: COLORS[i % COLORS.length] }}
+                />
                 <span>{d.status}</span>
                 <b>{d.count}</b>
               </div>
@@ -256,14 +306,18 @@ export default function Dashboard() {
           <div className="empty">No upcoming events.</div>
         )}
         <ul className="list">
-          {upcomingEvents.map(e => (
+          {upcomingEvents.map((e) => (
             <li key={e.id} className="list-row">
-              <div className="list-title">{e.title || e.amenity || "Event/Booking"}</div>
+              <div className="list-title">
+                {e.title || e.amenity || "Event/Booking"}
+              </div>
               <div className="list-sub">
                 {(e.date && new Date(e.date).toLocaleString()) ||
-                 (e.createdAt && new Date(e.createdAt).toLocaleString())}
+                  (e.createdAt && new Date(e.createdAt).toLocaleString())}
               </div>
-              <div className="badge">{(e.status || "pending").replace("_", " ")}</div>
+              <div className="badge">
+                {(e.status || "pending").replace("_", " ")}
+              </div>
             </li>
           ))}
         </ul>

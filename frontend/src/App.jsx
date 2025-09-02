@@ -27,9 +27,10 @@ import Profile from "./pages/Profile.jsx";
 import AdminDashboard from "./pages/admin/AdminDashboard.jsx";
 import Users from "./pages/admin/Users.jsx";
 import AdminLogin from "./pages/admin/AdminLogin.jsx";
-import Help from "./pages/Help.jsx"; // if you created the Help screen earlier
+import Help from "./pages/Help.jsx";
 import AuthCallback from "./pages/AuthCallback.jsx";
 import supabase from "./lib/supabase.js";
+import ForgotPassword from "./pages/ForgotPassword.jsx";
 
 function Shell({ children }) {
   const navigate = useNavigate();
@@ -113,6 +114,7 @@ export default function App() {
       {/* Public */}
       <Route path="/" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/auth/callback" element={<AuthCallback />} />
       <Route path="/admin/login" element={<AdminLogin />} />
       <Route

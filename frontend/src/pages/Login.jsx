@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { FiMail, FiLock, FiEye, FiEyeOff, FiLogIn } from "react-icons/fi";
-import supabase from "../lib/supabase";
 import axios from "axios";
 import { isAuthed, setUser } from "../lib/auth";
 import GoogleSignin from "../components/GoogleSignin";
@@ -23,15 +22,6 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     try {
-      const supRes = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (!supRes?.data?.user) {
-        setErr("Invalid email or password");
-        return;
-      }
 
       const res = await axios.post(
         import.meta.env.VITE_BACKEND_URL + "/login",
@@ -48,10 +38,7 @@ export default function Login() {
 
       localStorage.setItem("token", res.data.jwttoken);
       if (res.data.user) setUser(res.data.user);
-      // Go to dashboard
       navigate("/dashboard", { replace: true });
-      setUser(res.user);
-      navigate("/dashboard");
     } catch (e) {
       setErr("Invalid email or password");
     } finally {
@@ -104,6 +91,9 @@ export default function Login() {
               {showPw ? <FiEyeOff /> : <FiEye />}
             </button>
           </label>
+          <div className="auth-forget">
+            <Link to="/forgot-password">Forgot password?</Link>
+          </div>
 
           <button className="auth-btn" type="submit" disabled={loading}>
             {loading ? (

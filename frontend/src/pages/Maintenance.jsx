@@ -85,25 +85,19 @@ export default function Maintenance() {
 
   useEffect(() => {
     load();
-    // SSE live updates
     const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
     const es = new EventSource(`${API_URL}/events`);
     const handler = (ev) => {
       if (ev.type !== "message") return;
       try {
         const parsed = JSON.parse(ev.data);
-        // only care about maintenance events; backend uses named event "maintenance"
-        // Vite's EventSource delivers named events via addEventListener; add both
       } catch {}
     };
-    // listen named event
     const onMaint = (ev) => {
       const data = JSON.parse(ev.data);
-      // If the event relates to your user’s tickets or global, refresh list
       if (!selected || (data.ticketId && selected.id === data.ticketId) || data.ticket) {
         load();
       }
-      // small feedback
       const label =
         data.action === "status"
           ? `Ticket status: ${data.status}`
@@ -117,13 +111,11 @@ export default function Maintenance() {
     es.addEventListener("maintenance", onMaint);
     es.onmessage = handler;
     es.onerror = () => {
-      // ignore (dev server restarts etc.)
     };
     return () => {
       es.removeEventListener("maintenance", onMaint);
       es.close();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.id]);
 
   async function submitTicket(e) {
