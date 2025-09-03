@@ -4,6 +4,9 @@ import { FiMail, FiLock, FiEye, FiEyeOff, FiLogIn } from "react-icons/fi";
 import axios from "axios";
 import { isAuthed, setUser } from "../lib/auth";
 import GoogleSignin from "../components/GoogleSignin";
+import axios from "axios";
+import { isAuthed, setUser } from "../lib/auth";
+import GoogleSignin from "../components/GoogleSignin";
 
 export default function Login() {
   const navigate = useNavigate();
