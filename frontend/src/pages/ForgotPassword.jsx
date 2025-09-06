@@ -1,6 +1,6 @@
 import axios from "axios";
 import { useState } from "react";
-import {useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState("");
@@ -22,7 +22,7 @@ export default function ForgotPassword() {
           setErr("Email is required");
           return;
         }
-        const res = await axios.post(`${url}/send-otp`, {
+        const res = await axios.post(`${url}/auth/send-otp`, {
           email: email.trim(),
         });
         setMsg(res?.data?.message || "If the account exists, a code was sent.");
@@ -32,7 +32,7 @@ export default function ForgotPassword() {
           setErr("Enter the verification code");
           return;
         }
-        const res = await axios.post(`${url}/check-otp`, {
+        const res = await axios.post(`${url}/auth/check-otp`, {
           email: email.trim(),
           otp: otp.trim(),
         });
@@ -43,11 +43,11 @@ export default function ForgotPassword() {
           setErr("New password is required");
           return;
         }
-        const res = await axios.post(`${url}/password-reset`, {
+        const res = await axios.post(`${url}/auth/password-reset`, {
           email: email.trim(),
-          password:newPassword,
+          password: newPassword,
         });
-        if(!res) {
+        if (!res) {
           setErr("Error resetting password");
           return;
         }

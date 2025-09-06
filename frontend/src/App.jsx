@@ -10,6 +10,8 @@ import {
   FiShield,
   FiLogOut,
   FiHelpCircle,
+  FiBell,
+  FiSettings,
 } from "react-icons/fi";
 
 import ProtectedRoute from "./ProtectedRoute";
@@ -25,12 +27,14 @@ import Visitors from "./pages/Visitors.jsx";
 import Documents from "./pages/Documents.jsx";
 import Profile from "./pages/Profile.jsx";
 import AdminDashboard from "./pages/admin/AdminDashboard.jsx";
-import Users from "./pages/admin/Users.jsx";
-import AdminLogin from "./pages/admin/AdminLogin.jsx";
+import Residents from "./pages/admin/Residents.jsx";
 import Help from "./pages/Help.jsx";
 import AuthCallback from "./pages/AuthCallback.jsx";
+import PendingApproval from "./pages/PendingApproval.jsx";
 import supabase from "./lib/supabase.js";
 import ForgotPassword from "./pages/ForgotPassword.jsx";
+import Announcements from "./pages/admin/Announcements.jsx";
+import Community from "./pages/admin/Community.jsx";
 
 function Shell({ children }) {
   const navigate = useNavigate();
@@ -75,13 +79,6 @@ function Shell({ children }) {
             <Item to="/documents" icon={<FiFileText />} label="Documents" />
             <Item to="/profile" icon={<FiUser />} label="Profile" />
             <Item to="/help" icon={<FiHelpCircle />} label="Help" />
-            {showAdmin && (
-              <>
-                <div className="nav-divider" />
-                <Item to="/admin" icon={<FiShield />} label="Admin" />
-                <Item to="/admin/users" icon={<FiUsers />} label="Users" />
-              </>
-            )}
           </nav>
           <button className="logout-btn" onClick={logout}>
             <FiLogOut /> <span>Logout</span>
@@ -108,6 +105,101 @@ function Shell({ children }) {
   );
 }
 
+function AdminShell({ children }) {
+  const navigate = useNavigate();
+  const logout = async () => {
+    await supabase.auth.signOut();
+    clearUser();
+    navigate("/");
+  };
+
+  const AdminItem = ({ to, icon, label, end = false }) => (
+    <NavLink
+      to={to}
+      end={end}
+      className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
+    >
+      <span className="icon">{icon}</span>
+      <span className="label">{label}</span>
+    </NavLink>
+  );
+
+  return (
+    <div className="app-shell">
+      <aside
+        className="sidebar-modern"
+        style={{ maxHeight: "100vh", overflowY: "auto" }}
+      >
+        <div className="sidebar-main">
+          <div className="brand-row">
+            <div className="brand-mark">GZ</div>
+            <div className="brand-text">
+              <div className="brand-title">GateZen</div>
+              <div className="brand-sub">Admin Portal</div>
+            </div>
+          </div>
+          <nav className="nav-list">
+            <AdminItem
+              to="/admin"
+              icon={<FiHome />}
+              label="Dashboard"
+              end={true}
+            />
+            <AdminItem
+              to="/admin/residents"
+              icon={<FiUsers />}
+              label="Residents"
+            />
+            <AdminItem
+              to="/admin/announcements"
+              icon={<FiBell />}
+              label="Announcements"
+            />
+            <AdminItem
+              to="/admin/maintenance"
+              icon={<FiTool />}
+              label="Maintenance"
+            />
+            <AdminItem
+              to="/admin/bookings"
+              icon={<FiCalendar />}
+              label="Bookings"
+            />
+            <AdminItem
+              to="/admin/payments"
+              icon={<FiDollarSign />}
+              label="Payments"
+            />
+            <AdminItem
+              to="/admin/community"
+              icon={<FiUsers />}
+              label="Community"
+            />
+            <div className="nav-divider" />
+          </nav>
+          <button className="logout-btn" onClick={logout}>
+            <FiLogOut /> <span>Logout</span>
+          </button>
+        </div>
+      </aside>
+
+      <main className="main-area">
+        <header className="header-modern">
+          <div className="header-title">Admin Dashboard</div>
+          <div className="user-chip">
+            <div className="avatar">A</div>
+            <div className="meta">
+              <div className="name">Administrator</div>
+              <div className="role">Admin Portal</div>
+            </div>
+          </div>
+        </header>
+        <div className="content modern-content">{children}</div>
+      </main>
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <Routes>
@@ -115,8 +207,8 @@ export default function App() {
       <Route path="/" element={<Login />} />
       <Route path="/register" element={<Register />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/pending" element={<PendingApproval />} />
       <Route path="/auth/callback" element={<AuthCallback />} />
-      <Route path="/admin/login" element={<AdminLogin />} />
       <Route
         path="/help"
         element={
@@ -197,35 +289,45 @@ export default function App() {
           </ProtectedRoute>
         }
       />
-      <Route
-        path="/admin/users"
-        element={
-          <ProtectedRoute>
-            <Shell>
-              <Users />
-            </Shell>
-          </ProtectedRoute>
-        }
-      />
 
       {/* Admin-only */}
       <Route
         path="/admin"
         element={
-          <ProtectedRoute allowedRoles={["admin"]}>
-            <Shell>
+          <ProtectedRoute>
+            <AdminShell>
               <AdminDashboard />
-            </Shell>
+            </AdminShell>
           </ProtectedRoute>
         }
       />
       <Route
-        path="/admin/users"
+        path="/admin/residents"
         element={
-          <ProtectedRoute allowedRoles={["admin"]}>
-            <Shell>
-              <Users />
-            </Shell>
+          <ProtectedRoute>
+            <AdminShell>
+              <Residents />
+            </AdminShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/announcements"
+        element={
+          <ProtectedRoute>
+            <AdminShell>
+              <Announcements />
+            </AdminShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/community"
+        element={
+          <ProtectedRoute>
+            <AdminShell>
+              <Community />
+            </AdminShell>
           </ProtectedRoute>
         }
       />

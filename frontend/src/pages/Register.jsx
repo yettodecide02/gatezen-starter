@@ -32,7 +32,7 @@ export default function Register() {
     setLoading(true);
     try {
       const existingUser = await axios.get(
-        import.meta.env.VITE_BACKEND_URL + "/existing-user",
+        import.meta.env.VITE_BACKEND_URL + "/auth/existing-user",
         { params: { email } }
       );
 
@@ -42,24 +42,29 @@ export default function Register() {
       }
 
       const res = await axios.post(
-        import.meta.env.VITE_BACKEND_URL + "/signup",
+        import.meta.env.VITE_BACKEND_URL + "/auth/signup",
         {
           name: name,
           email: email,
           password: password,
         }
       );
-
-      if (res.status !== 200) {
+      console.log(res);
+      if (res.status !== 201) {
         setErr("User registration failed");
         return;
       }
 
       localStorage.setItem("token", res.data.jwttoken);
-      
-      if (res.data.user) setUser(res.data.user);
-      navigate("/dashboard", { replace: true });
 
+      if (res.data.user) setUser(res.data.user);
+
+      // Check user status after registration
+      if (res.data.user.status === "PENDING") {
+        navigate("/pending", { replace: true });
+      } else {
+        navigate("/dashboard", { replace: true });
+      }
     } catch (e) {
       setErr(e?.message || "Registration failed");
     } finally {

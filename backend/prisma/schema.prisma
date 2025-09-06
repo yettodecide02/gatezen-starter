@@ -1,12 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -21,8 +15,10 @@ model User {
   name     String
   email    String    @unique
   password String
-  tickets  Ticket[]  // A user can create many maintenance tickets
-  comments Comment[] // A user can add many comments
+  role     UserRole  @default(RESIDENT)
+  status   UserStatus @default(PENDING)
+  tickets  Ticket[]  
+  comments Comment[] 
   bookings Booking[] 
   rsvp RSVP[]
   payments Payments[]
@@ -152,4 +148,15 @@ enum PaymentStatus {
   PENDING
   COMPLETED
   FAILED
+}
+
+enum UserRole {
+  ADMIN
+  RESIDENT
+}
+
+enum UserStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }

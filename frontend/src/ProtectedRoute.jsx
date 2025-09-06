@@ -10,8 +10,14 @@ export default function ProtectedRoute({ children, allowedRoles }) {
     return <Navigate to="/" replace state={{ from: location.pathname }} />;
   }
 
+  const user = getUser();
+
+  // Check if user status is pending
+  if (user && user.status === "PENDING") {
+    return <Navigate to="/pending" replace />;
+  }
+
   if (Array.isArray(allowedRoles) && allowedRoles.length > 0) {
-    const user = getUser();
     if (!user || !allowedRoles.includes(user.role)) {
       return <Navigate to="/dashboard" replace />;
     }

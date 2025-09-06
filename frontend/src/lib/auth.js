@@ -24,5 +24,5 @@ export function isAuthed() {
 
 export function isAdmin() {
   const u = getUser();
-  return !!u && u.role === 'admin';
+  return !!u && u.role === 'ADMIN';
 }

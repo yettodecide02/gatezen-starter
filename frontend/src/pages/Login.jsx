@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { FiMail, FiLock, FiEye, FiEyeOff, FiLogIn } from "react-icons/fi";
 import axios from "axios";
-import { isAuthed, setUser } from "../lib/auth";
+import { isAdmin, isAuthed, setUser } from "../lib/auth";
 import GoogleSignin from "../components/GoogleSignin";
 
 export default function Login() {
@@ -15,16 +15,16 @@ export default function Login() {
   const [err, setErr] = useState("");
 
   useEffect(() => {
-    if (isAuthed()) navigate("/dashboard");
+    if (isAuthed() && isAdmin()) navigate("/admin");
+    else if (isAuthed()) navigate("/dashboard");
   }, [navigate]);
 
   const submit = async (e) => {
     e.preventDefault();
     setLoading(true);
     try {
-
       const res = await axios.post(
-        import.meta.env.VITE_BACKEND_URL + "/login",
+        import.meta.env.VITE_BACKEND_URL + "/auth/login",
         {
           email: email,
           password: password,
@@ -38,9 +38,17 @@ export default function Login() {
 
       localStorage.setItem("token", res.data.jwttoken);
       if (res.data.user) setUser(res.data.user);
-      navigate("/dashboard", { replace: true });
+
+      // Check user status
+      if (res.data.user.status === "PENDING") {
+        navigate("/pending", { replace: true });
+      } else if (res.data.user.role === "ADMIN") {
+        navigate("/admin", { replace: true });
+      } else {
+        navigate("/dashboard", { replace: true });
+      }
     } catch (e) {
-      setErr("Invalid email or password");
+      setErr(e.response?.data?.error || "Login failed");
     } finally {
       setLoading(false);
     }

@@ -40,19 +40,22 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
 
   const token = localStorage.getItem("token");
-  const user = localStorage.getItem("user");
+  const user = JSON.parse(localStorage.getItem("user") || "{}");
 
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
         setLoading(true);
-        const res = await axios.get(import.meta.env.VITE_BACKEND_URL + "/dashboard", {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-          params: { userId: user.id },
-        });
+        const res = await axios.get(
+          import.meta.env.VITE_BACKEND_URL + "/resident/dashboard",
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+            params: { userId: user.id },
+          }
+        );
         if (!mounted) return;
         setAnn(res.data.announcements || []);
         setPayments(res.data.payments || []);
@@ -85,10 +88,20 @@ export default function Dashboard() {
   const maintCounts = useMemo(() => {
     const by = { submitted: 0, in_progress: 0, resolved: 0, other: 0 };
     maintenance.forEach((t) => {
-      const s = (t.status || "").toLowerCase();
-      if (s === "submitted") by.submitted++;
-      else if (s === "in_progress" || s === "in-progress") by.in_progress++;
-      else if (s === "resolved" || s === "closed" || s === "done")
+      const s = (t.status || "").toUpperCase();
+      if (s === "SUBMITTED" || s === "PENDING") by.submitted++;
+      else if (
+        s === "IN_PROGRESS" ||
+        s === "IN-PROGRESS" ||
+        s === "IN PROGRESS"
+      )
+        by.in_progress++;
+      else if (
+        s === "RESOLVED" ||
+        s === "CLOSED" ||
+        s === "DONE" ||
+        s === "COMPLETED"
+      )
         by.resolved++;
       else by.other++;
     });
@@ -104,12 +117,16 @@ export default function Dashboard() {
   );
 
   const upcomingEvents = useMemo(() => {
-    const normalizeDate = (x) => new Date(x.date || x.createdAt || Date.now());
     return [...bookings]
-      .filter((b) =>
-        ["pending", "approved"].includes((b.status || "").toLowerCase())
-      )
-      .sort((a, b) => normalizeDate(a) - normalizeDate(b))
+      .filter((b) => {
+        const status = (b.status || "").toUpperCase();
+        return ["PENDING", "APPROVED", "CONFIRMED"].includes(status);
+      })
+      .sort((a, b) => {
+        const dateA = new Date(a.createdAt);
+        const dateB = new Date(b.createdAt);
+        return dateB - dateA; // Most recent first
+      })
       .slice(0, 4);
   }, [bookings]);
 
@@ -208,7 +225,7 @@ export default function Dashboard() {
               <div className="list-sub">
                 {new Date(a.createdAt).toLocaleString()}
               </div>
-              <div className="list-body">{a.body}</div>
+              <div className="list-body">{a.content || a.body}</div>
             </li>
           ))}
         </ul>
@@ -308,16 +325,11 @@ export default function Dashboard() {
         <ul className="list">
           {upcomingEvents.map((e) => (
             <li key={e.id} className="list-row">
-              <div className="list-title">
-                {e.title || e.amenity || "Event/Booking"}
-              </div>
+              <div className="list-title">{e.facility?.name || "Booking"}</div>
               <div className="list-sub">
-                {(e.date && new Date(e.date).toLocaleString()) ||
-                  (e.createdAt && new Date(e.createdAt).toLocaleString())}
+                {new Date(e.createdAt).toLocaleString()}
               </div>
-              <div className="badge">
-                {(e.status || "pending").replace("_", " ")}
-              </div>
+              <div className="badge">{e.status || "PENDING"}</div>
             </li>
           ))}
         </ul>
