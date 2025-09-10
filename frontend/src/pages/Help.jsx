@@ -11,7 +11,6 @@ import {
   FiAlertCircle,
   FiExternalLink
 } from "react-icons/fi";
-import { api } from "../api";
 
 const faqsSeed = [
   {

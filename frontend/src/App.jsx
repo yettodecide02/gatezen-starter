@@ -27,6 +27,7 @@ import Visitors from "./pages/Visitors.jsx";
 import Documents from "./pages/Documents.jsx";
 import Profile from "./pages/Profile.jsx";
 import AdminDashboard from "./pages/admin/AdminDashboard.jsx";
+import AdminSignup from "./pages/admin/AdminSignup.jsx";
 import Residents from "./pages/admin/Residents.jsx";
 import Help from "./pages/Help.jsx";
 import AuthCallback from "./pages/AuthCallback.jsx";
@@ -206,6 +207,7 @@ export default function App() {
       {/* Public */}
       <Route path="/" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/admin-signup" element={<AdminSignup />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/pending" element={<PendingApproval />} />
       <Route path="/auth/callback" element={<AuthCallback />} />

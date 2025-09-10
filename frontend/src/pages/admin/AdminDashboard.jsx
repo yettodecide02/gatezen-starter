@@ -13,6 +13,7 @@ import {
   FiXCircle,
   FiInfo,
 } from "react-icons/fi";
+import { getUser } from "../../lib/auth";
 
 // Toast Component
 function Toast({ toast, onClose }) {
@@ -183,6 +184,7 @@ export default function AdminDashboard() {
         headers: {
           Authorization: `Bearer ${token}`,
         },
+      params: {communityId: getUser().communityId}
       });
       const data = res.data;
       setPayments(data.payments || []);

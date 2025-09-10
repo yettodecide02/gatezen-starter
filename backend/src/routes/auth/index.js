@@ -2,6 +2,7 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
 import prisma from "../../../lib/prisma.js";
+import axios from "axios";
 
 const router = express.Router();
 
@@ -17,12 +18,18 @@ const otps = {};
 
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
-  console.log(email, password);
 
   try {
     const user = await prisma.user.findUnique({
       where: { email, password },
-      select: { id: true, name: true, email: true, role: true, status: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        status: true,
+        communityId: true,
+      },
     });
 
     if (!user) {
@@ -33,27 +40,123 @@ router.post("/login", async (req, res) => {
       return res.status(403).json({ error: "Account has been rejected" });
     }
 
+    const community = await prisma.community.findUnique({
+      where: { id: user.communityId },
+      select: { id: true, name: true },
+    });
+
     const jwttoken = jwt.sign({ userId: user.id }, process.env.JWT_SECRET);
 
-    return res.status(200).json({ user, jwttoken });
+    const data = { ...user, communityName: community?.name };
+
+    return res.status(200).json({ user: data, jwttoken });
   } catch (e) {
     console.error("Error logging in:", e);
     return res.status(500).json({ error: "Internal server error" });
   }
 });
 
+router.post("/community-signup", async (req, res) => {
+  const {
+    name,
+    email,
+    password,
+    communityName,
+    address,
+    "g-recaptcha-response": recaptchaToken,
+  } = req.body;
+  if (!recaptchaToken) {
+    return res
+      .status(400)
+      .json({ error: "Please complete the reCAPTCHA test" });
+  }
+  try {
+    const existingAdmin = await prisma.user.findUnique({
+      where: { email },
+    });
+    const existingCommunity = await prisma.community.findUnique({
+      where: { name: communityName },
+    });
+    if (existingAdmin) {
+      return res.status(400).json({ error: "Admin with this email exists" });
+    }
+    if (existingCommunity) {
+      return res.status(400).json({ error: "Community with this name exists" });
+    }
+    const community = await prisma.community.create({
+      data: { name: communityName, address },
+    });
+    const admin = await prisma.user.create({
+      data: {
+        name,
+        email,
+        password,
+        role: "ADMIN",
+        status: "APPROVED",
+        communityId: community.id,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        status: true,
+        communityId: true,
+      },
+    });
+
+    const jwttoken = jwt.sign({ userId: admin.id }, process.env.JWT_SECRET);
+    return res.status(201).json({ user: admin, jwttoken });
+  } catch (e) {
+    console.error("Error during community signup:", e);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 router.post("/signup", async (req, res) => {
-  const { name, email, password } = req.body;
+  const { name, email, password, communityId } = req.body;
 
   try {
+    if (!communityId) {
+      return res.status(400).json({
+        error: "Community selection is required.",
+      });
+    }
+
+    const community = await prisma.community.findUnique({
+      where: { id: communityId },
+    });
+
+    if (!community) {
+      return res.status(400).json({
+        error: "Selected community not found. Please select a valid community.",
+      });
+    }
+
     const user = await prisma.user.create({
-      data: { name, email, password, role: "RESIDENT", status: "PENDING" },
-      select: { id: true, name: true, email: true, role: true, status: true },
+      data: {
+        name,
+        email,
+        password,
+        role: "RESIDENT",
+        status: "PENDING",
+        communityId: community.id,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        status: true,
+        communityId: true,
+      },
     });
 
     const jwttoken = jwt.sign({ userId: user.id }, process.env.JWT_SECRET);
 
-    return res.status(201).json({ user, jwttoken });
+    const data = { ...user, communityName: community.name };
+
+    return res.status(201).json({ user: data, jwttoken });
   } catch (e) {
     console.error("Error signing up:", e);
     return res.status(500).json({ error: "Internal server error" });
@@ -65,17 +168,27 @@ router.get("/existing-user", async (req, res) => {
   try {
     const existingUser = await prisma.user.findUnique({
       where: { email },
-      select: { id: true, name: true, email: true, role: true, status: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        status: true,
+        communityId: true,
+      },
     });
 
     if (existingUser) {
+      const community = await prisma.community.findUnique({
+        where: { id: existingUser.communityId },
+        select: { id: true, name: true },
+      });
       const jwttoken = jwt.sign(
         { userId: existingUser.id },
         process.env.JWT_SECRET
       );
-      return res
-        .status(200)
-        .json({ exists: true, user: existingUser, jwttoken });
+      const data = { ...existingUser, communityName: community?.name };
+      return res.status(200).json({ exists: true, user: data, jwttoken });
     }
     return res.status(200).json({ exists: false });
   } catch (e) {
@@ -88,7 +201,6 @@ router.post("/send-otp", async (req, res) => {
   if (!email) {
     return res.status(400).send("Email is required");
   }
-  console.log(email);
 
   const userOtp = Math.floor(100000 + Math.random() * 900000).toString();
   otps[email] = userOtp;
@@ -123,7 +235,6 @@ router.post("/check-otp", async (req, res) => {
 
 router.post("/password-reset", async (req, res) => {
   const { email, password } = req.body;
-  console.log(email, password);
   if (!email || !password) {
     return res
       .status(400)
@@ -142,6 +253,34 @@ router.post("/password-reset", async (req, res) => {
     return res.status(200).json({ message: "Password reset successful." });
   } catch (e) {
     return res.status(500).json({ message: "Internal server error." });
+  }
+});
+
+// Get all communities for dropdown selection
+router.get("/communities", async (req, res) => {
+  try {
+    const communities = await prisma.community.findMany({
+      select: {
+        id: true,
+        name: true,
+        address: true,
+      },
+      orderBy: {
+        name: "asc",
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      data: communities,
+    });
+  } catch (error) {
+    console.error("Error fetching communities:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch communities",
+      error: error.message,
+    });
   }
 });
 

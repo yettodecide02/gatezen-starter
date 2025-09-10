@@ -7,10 +7,12 @@ import {
   FiLogIn,
   FiMail,
   FiUser,
+  FiMapPin,
 } from "react-icons/fi";
 import { Link, useNavigate } from "react-router-dom";
 import { isAuthed, setUser } from "../lib/auth";
 import GoogleSignin from "../components/GoogleSignin";
+import ReCAPTCHA from "react-google-recaptcha";
 
 export default function Register() {
   const navigate = useNavigate();
@@ -18,21 +20,83 @@ export default function Register() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [selectedCommunity, setSelectedCommunity] = useState("");
+  const [communities, setCommunities] = useState([]);
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [captcha, setCaptcha] = useState(null);
+  const [loadingCommunities, setLoadingCommunities] = useState(false);
   const [err, setErr] = useState("");
 
   useEffect(() => {
     if (isAuthed()) navigate("/dashboard");
+    fetchCommunities();
   }, [navigate]);
 
+  const fetchCommunities = async () => {
+    setLoadingCommunities(true);
+    setErr(""); 
+
+    try {
+      const response = await axios.get(
+        import.meta.env.VITE_API_URL + "/auth/communities"
+      );
+
+      if (response.data.success) {
+        setCommunities(response.data.data);
+        if (response.data.data.length === 0) {
+          setErr("No communities available. Please contact administrator.");
+        }
+      } else {
+        setErr("Failed to load communities");
+      }
+    } catch (error) {
+      console.error("Error fetching communities:", error);
+      setErr("Failed to load communities. Please try again.");
+    } finally {
+      setLoadingCommunities(false);
+    }
+  };
   const submit = async (e) => {
     e.preventDefault();
     setErr("");
     setLoading(true);
+    if (!captcha) {
+      setErr("Please complete the reCAPTCHA");
+      setLoading(false);
+      return;
+    }
+
+    // Validate community selection
+    if (!selectedCommunity) {
+      setErr("Please select a community to continue");
+      setLoading(false);
+      return;
+    }
+
+    if (communities.length === 0) {
+      setErr("No communities available. Please contact administrator.");
+      setLoading(false);
+      return;
+    }
+
     try {
+      const verifyRes = await axios.post(
+        "https://www.google.com/recaptcha/api/siteverify",
+        new URLSearchParams({
+          secret: import.meta.env.VITE_RECAPTCHA_SECRET_KEY,
+          response: captcha,
+        })
+      );
+
+      if (!verifyRes.data.success) {
+        setErr("reCAPTCHA verification failed. Please try again.");
+        setLoading(false);
+        return;
+      }
+
       const existingUser = await axios.get(
-        import.meta.env.VITE_BACKEND_URL + "/auth/existing-user",
+        import.meta.env.VITE_API_URL + "/auth/existing-user",
         { params: { email } }
       );
 
@@ -42,11 +106,12 @@ export default function Register() {
       }
 
       const res = await axios.post(
-        import.meta.env.VITE_BACKEND_URL + "/auth/signup",
+        import.meta.env.VITE_API_URL + "/auth/signup",
         {
           name: name,
           email: email,
           password: password,
+          communityId: selectedCommunity,
         }
       );
       console.log(res);
@@ -114,6 +179,46 @@ export default function Register() {
 
           <label className="field">
             <span className="field-icon">
+              {loadingCommunities ? (
+                <div className="spinner"></div>
+              ) : (
+                <FiMapPin />
+              )}
+            </span>
+            <select
+              value={selectedCommunity}
+              onChange={(e) => setSelectedCommunity(e.target.value)}
+              required
+              disabled={loadingCommunities || communities.length === 0}
+              className={selectedCommunity === "" ? "placeholder" : ""}
+            >
+              <option value="" disabled>
+                {loadingCommunities
+                  ? "Loading communities..."
+                  : communities.length === 0
+                  ? "No communities available"
+                  : "Select your community"}
+              </option>
+              {communities.map((community) => (
+                <option key={community.id} value={community.id}>
+                  {community.name}{" "}
+                  {community.address && `- ${community.address}`}
+                </option>
+              ))}
+            </select>
+            {communities.length === 0 && !loadingCommunities && (
+              <button
+                type="button"
+                className="retry-btn"
+                onClick={fetchCommunities}
+              >
+                Retry
+              </button>
+            )}
+          </label>
+
+          <label className="field">
+            <span className="field-icon">
               <FiLock />
             </span>
             <input
@@ -131,6 +236,11 @@ export default function Register() {
               {showPw ? <FiEyeOff /> : <FiEye />}
             </button>
           </label>
+
+          <ReCAPTCHA
+            sitekey={import.meta.env.VITE_RECAPTCHA_SITE_KEY}
+            onChange={(token) => setCaptcha(token)}
+          />
 
           <button className="auth-btn" type="submit" disabled={loading}>
             {loading ? (

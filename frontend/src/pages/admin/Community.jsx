@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import axios from "axios";
 import {
   FiHome,
   FiSettings,
@@ -11,6 +12,7 @@ import {
   FiSave,
   FiMapPin,
 } from "react-icons/fi";
+import { getUser } from "../../lib/auth";
 
 const FACILITY_TYPES = [
   { id: "swimming_pool", name: "Swimming Pool", icon: "🏊" },
@@ -34,6 +36,16 @@ const PRICE_TYPES = [
   { id: "one_time", name: "One Time" },
 ];
 
+// API Configuration
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+const getAuthHeaders = () => {
+  const token = localStorage.getItem("token") || "";
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  };
+};
+
 export default function Community() {
   const [communityData, setCommunityData] = useState({
     name: "",
@@ -46,7 +58,7 @@ export default function Community() {
   const [success, setSuccess] = useState("");
   const [error, setError] = useState("");
 
-  // Initialize facilities object
+  // Initialize facilities object and load existing community data
   useEffect(() => {
     const initialFacilities = {};
     FACILITY_TYPES.forEach((type) => {
@@ -62,7 +74,68 @@ export default function Community() {
       };
     });
     setFacilities(initialFacilities);
+
+    // Load existing community data
+    loadCommunityData();
   }, []);
+
+  const loadCommunityData = async () => {
+    try {
+      const response = await axios.get(`${API_URL}/admin/community`, {
+        headers: getAuthHeaders(),
+        params: { communityId: getUser().communityId },
+      });
+
+      if (response.data.success && response.data.data) {
+        const community = response.data.data;
+
+        // Set community basic data
+        setCommunityData({
+          name: community.name || "",
+          description: community.description || "",
+          address: community.address || "",
+        });
+
+        // Convert facilities back to frontend format
+        if (community.facilities && community.facilities.length > 0) {
+          const facilitiesMap = {};
+
+          // Initialize with defaults first
+          FACILITY_TYPES.forEach((type) => {
+            facilitiesMap[type.id] = {
+              enabled: false,
+              quantity: 1,
+              maxCapacity: 10,
+              isPaid: false,
+              price: 0,
+              priceType: "per_hour",
+              operatingHours: "09:00-21:00",
+              rules: "",
+            };
+          });
+
+          // Override with actual data
+          community.facilities.forEach((facility) => {
+            facilitiesMap[facility.facilityType] = {
+              enabled: facility.enabled,
+              quantity: facility.quantity,
+              maxCapacity: facility.maxCapacity,
+              isPaid: facility.isPaid,
+              price: facility.price || 0,
+              priceType: facility.priceType || "per_hour",
+              operatingHours: facility.operatingHours || "09:00-21:00",
+              rules: facility.rules || "",
+            };
+          });
+
+          setFacilities(facilitiesMap);
+        }
+      }
+    } catch (error) {
+      console.error("Error loading community data:", error);
+      // Don't show error to user for initial load, just log it
+    }
+  };
 
   const updateCommunityData = (field, value) => {
     setCommunityData((prev) => ({ ...prev, [field]: value }));
@@ -111,17 +184,35 @@ export default function Community() {
       const payload = {
         ...communityData,
         facilities: enabledFacilities,
+        communityId: getUser().communityId,
       };
 
       console.log("Community configuration:", payload);
 
-      // TODO: Replace with actual API call
-      // await saveCommunityConfiguration(payload);
+      // Make API call to save community configuration
+      const response = await axios.post(`${API_URL}/admin/community`, payload, {
+        headers: getAuthHeaders(),
+      });
 
-      setSuccess("Community configuration saved successfully!");
-      setTimeout(() => setSuccess(""), 3000);
+      if (response.data.success) {
+        setSuccess(
+          response.data.message || "Community configuration saved successfully!"
+        );
+        setTimeout(() => setSuccess(""), 3000);
+
+        // Reload the community data to reflect any server-side changes
+        await loadCommunityData();
+      } else {
+        setError(
+          response.data.message || "Failed to save community configuration"
+        );
+      }
     } catch (err) {
-      setError("Failed to save community configuration");
+      setError(
+        err.response?.data?.message ||
+          err.message ||
+          "Failed to save community configuration"
+      );
       console.error("Save error:", err);
     } finally {
       setLoading(false);
@@ -451,21 +542,62 @@ export default function Community() {
                           className="label"
                           style={{ marginBottom: "8px", display: "block" }}
                         >
-                          Operating Hours
+                          Start Time
                         </label>
-                        <input
-                          type="text"
-                          className="input"
-                          value={config.operatingHours}
-                          onChange={(e) =>
+                        <select
+                          className="select"
+                          value={config.operatingHours.split("-")[0] || "09:00"}
+                          onChange={(e) => {
+                            const endTime =
+                              config.operatingHours.split("-")[1] || "21:00";
                             updateFacility(
                               facilityType.id,
                               "operatingHours",
-                              e.target.value
-                            )
-                          }
-                          placeholder="09:00-21:00"
-                        />
+                              `${e.target.value}-${endTime}`
+                            );
+                          }}
+                        >
+                          <option value="06:00">06:00 AM</option>
+                          <option value="07:00">07:00 AM</option>
+                          <option value="08:00">08:00 AM</option>
+                          <option value="09:00">09:00 AM</option>
+                          <option value="10:00">10:00 AM</option>
+                          <option value="11:00">11:00 AM</option>
+                          <option value="12:00">12:00 PM</option>
+                        </select>
+                      </div>
+                      <div className="config-item">
+                        <label
+                          className="label"
+                          style={{ marginBottom: "8px", display: "block" }}
+                        >
+                          End Time
+                        </label>
+                        <select
+                          className="select"
+                          value={config.operatingHours.split("-")[1] || "21:00"}
+                          onChange={(e) => {
+                            const startTime =
+                              config.operatingHours.split("-")[0] || "09:00";
+                            updateFacility(
+                              facilityType.id,
+                              "operatingHours",
+                              `${startTime}-${e.target.value}`
+                            );
+                          }}
+                        >
+                          <option value="13:00">01:00 PM</option>
+                          <option value="14:00">02:00 PM</option>
+                          <option value="15:00">03:00 PM</option>
+                          <option value="16:00">04:00 PM</option>
+                          <option value="17:00">05:00 PM</option>
+                          <option value="18:00">06:00 PM</option>
+                          <option value="19:00">07:00 PM</option>
+                          <option value="20:00">08:00 PM</option>
+                          <option value="21:00">09:00 PM</option>
+                          <option value="22:00">10:00 PM</option>
+                          <option value="23:00">11:00 PM</option>
+                        </select>
                       </div>
                     </div>
 

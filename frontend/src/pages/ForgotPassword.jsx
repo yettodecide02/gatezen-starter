@@ -15,7 +15,7 @@ export default function ForgotPassword() {
     e.preventDefault();
     setMsg("");
     setErr("");
-    const url = import.meta.env.VITE_BACKEND_URL;
+    const url = import.meta.env.VITE_API_URL;
     try {
       if (stage === "email_verification") {
         if (!email.trim()) {

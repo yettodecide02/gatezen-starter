@@ -16,6 +16,7 @@ export function getUser() {
 
 export function clearUser() {
   localStorage.removeItem(KEY);
+  localStorage.removeItem('token');
 }
 
 export function isAuthed() {

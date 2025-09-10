@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,22 +7,80 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Community {
+  id               String                  @id @default(uuid())
+  name             String                  @unique
+  description      String?
+  address          String?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  facilityConfigs  FacilityConfiguration[] @relation("FacilityConfigs")
+  actualFacilities Facility[]              @relation("CommunityFacilities")
+  users            User[]
+  tickets          Ticket[]
+  announcements    Announcements[]
+  payments         Payments[]
+  events           Event[]
+  bookings         Booking[]
+}
+
 model User {
-  id       String    @id @default(uuid())
-  name     String
-  email    String    @unique
-  password String
-  role     UserRole  @default(RESIDENT)
-  status   UserStatus @default(PENDING)
-  tickets  Ticket[]  
-  comments Comment[] 
-  bookings Booking[] 
-  rsvp RSVP[]
-  payments Payments[]
+  id          String     @id @default(uuid())
+  name        String
+  email       String     @unique
+  password    String
+  role        UserRole   @default(RESIDENT)
+  status      UserStatus @default(PENDING)
+  communityId String
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  bookings    Booking[]
+  comments    Comment[]
+  payments    Payments[]
+  rsvp        RSVP[]
+  tickets     Ticket[]
+  community   Community  @relation(fields: [communityId], references: [id], onDelete: Cascade)
+}
+
+model FacilityConfiguration {
+  id             String       @id @default(uuid())
+  facilityType   FacilityType
+  enabled        Boolean      @default(false)
+  quantity       Int          @default(1)
+  maxCapacity    Int          @default(10)
+  isPaid         Boolean      @default(false)
+  price          Float?       @default(0)
+  priceType      PriceType?   @default(PER_HOUR)
+  operatingHours String?      @default("09:00-21:00")
+  rules          String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  communityId    String
+  community      Community    @relation("FacilityConfigs", fields: [communityId], references: [id], onDelete: Cascade)
+  facilities     Facility[]
+
+  @@unique([communityId, facilityType])
+}
+
+model Facility {
+  id              String                 @id @default(uuid())
+  name            String
+  open            String
+  close           String
+  slotMins        Int
+  capacity        Int                    @default(10)
+  communityId     String
+  facilityType    FacilityType
+  configurationId String?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  bookings        Booking[]
+  community       Community              @relation("CommunityFacilities", fields: [communityId], references: [id], onDelete: Cascade)
+  configuration   FacilityConfiguration? @relation(fields: [configurationId], references: [id])
 }
 
 model Ticket {
-  id          String      @id @default(uuid())
+  id          String       @id @default(uuid())
   title       String
   category    String
   description String?
@@ -33,10 +88,12 @@ model Ticket {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   userId      String
-  user        User         @relation(fields: [userId], references: [id])
+  communityId String
   comments    Comment[]
-  images      Image[]
   history     History[]
+  images      Image[]
+  user        User         @relation(fields: [userId], references: [id])
+  community   Community    @relation(fields: [communityId], references: [id], onDelete: Cascade)
 }
 
 model Comment {
@@ -44,9 +101,9 @@ model Comment {
   text      String
   createdAt DateTime @default(now())
   userId    String
-  user      User     @relation(fields: [userId], references: [id])
   ticketId  String
   ticket    Ticket   @relation(fields: [ticketId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
 }
 
 model Image {
@@ -58,7 +115,7 @@ model Image {
 }
 
 model History {
-  id       String      @id @default(uuid())
+  id       String       @id @default(uuid())
   status   TicketStatus
   note     String?
   at       DateTime     @default(now())
@@ -66,88 +123,72 @@ model History {
   ticket   Ticket       @relation(fields: [ticketId], references: [id])
 }
 
-enum TicketStatus {
-  SUBMITTED
-  IN_PROGRESS
-  RESOLVED
-}
-
-
-// --- Facilities / Bookings / Events ---
-
-model Facility {
-  id        String   @id @default(uuid())
-  name      String
-  open      String   // "09:00"  (frontend reads facility.open)
-  close     String   // "21:00"  (frontend reads facility.close)
-  slotMins  Int      // 60       (frontend reads facility.slotMins)
-  bookings  Booking[]
-}
-
 model Booking {
-  id         String        @id @default(uuid())
-  startsAt   DateTime
-  endsAt     DateTime
-  note       String?
-  status     BookingStatus @default(CONFIRMED)
-
-  userId     String
-  user       User          @relation(fields: [userId], references: [id])
-
-  facilityId String
-  facility   Facility      @relation(fields: [facilityId], references: [id])
+  id          String        @id @default(uuid())
+  startsAt    DateTime
+  endsAt      DateTime
+  note        String?
+  status      BookingStatus @default(CONFIRMED)
+  userId      String
+  facilityId  String
+  communityId String
+  peopleCount Int           @default(1)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  facility    Facility      @relation(fields: [facilityId], references: [id])
+  user        User          @relation(fields: [userId], references: [id])
+  community   Community     @relation(fields: [communityId], references: [id], onDelete: Cascade)
 
   @@index([facilityId, startsAt])
-}
-
-enum BookingStatus {
-  CONFIRMED
-  CANCELLED
+  @@index([communityId, startsAt])
 }
 
 model Event {
-  id          String   @id @default(uuid())
+  id          String    @id @default(uuid())
   title       String
   description String?
   location    String
   startsAt    DateTime
   endsAt      DateTime
+  communityId String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   rsvps       RSVP[]
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
 }
 
 model RSVP {
   id      String @id @default(uuid())
   userId  String
-  user    User   @relation(fields: [userId], references: [id])
   eventId String
   event   Event  @relation(fields: [eventId], references: [id])
+  user    User   @relation(fields: [userId], references: [id])
 
   @@unique([userId, eventId])
 }
 
 model Announcements {
-  id        String   @id @default(uuid())
-  title     String
-  content   String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  userId    String
+  id          String    @id @default(uuid())
+  title       String
+  content     String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  userId      String
+  communityId String
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
 }
 
 model Payments {
-  id        String   @id @default(uuid())
-  amount    Float
-  method    String
-  status    String
-  createdAt DateTime @default(now())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-}
-
-enum PaymentStatus {
-  PENDING
-  COMPLETED
-  FAILED
+  id          String    @id @default(uuid())
+  amount      Float
+  method      String
+  status      String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  userId      String
+  communityId String
+  user        User      @relation(fields: [userId], references: [id])
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
 }
 
 enum UserRole {
@@ -159,4 +200,43 @@ enum UserStatus {
   PENDING
   APPROVED
   REJECTED
+}
+
+enum TicketStatus {
+  SUBMITTED
+  IN_PROGRESS
+  RESOLVED
+}
+
+enum BookingStatus {
+  CONFIRMED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum FacilityType {
+  SWIMMING_POOL
+  GYMNASIUM
+  TENNIS_COURT
+  BASKETBALL_COURT
+  PLAYGROUND
+  CLUBHOUSE
+  PARTY_HALL
+  CONFERENCE_ROOM
+  LIBRARY
+  GARDEN
+  JOGGING_TRACK
+}
+
+enum PriceType {
+  PER_HOUR
+  PER_DAY
+  PER_WEEK
+  PER_MONTH
+  ONE_TIME
 }

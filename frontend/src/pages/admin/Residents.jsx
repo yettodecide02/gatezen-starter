@@ -13,6 +13,7 @@ import {
   FiClock,
   FiInfo,
 } from "react-icons/fi";
+import { getUser } from "../../lib/auth";
 
 // Toast Components (reusing from AdminDashboard)
 function Toast({ toast, onClose }) {
@@ -205,6 +206,7 @@ export default function Residents() {
         headers: {
           Authorization: `Bearer ${token}`,
         },
+        params: { communityId: getUser().communityId },
       });
 
       setResidents(res.data.residents || []);
@@ -225,7 +227,7 @@ export default function Residents() {
 
       await axios.post(
         url + endpoint,
-        { userId },
+        { userId, communityId: getUser().communityId },
         {
           headers: {
             Authorization: `Bearer ${token}`,

@@ -7,6 +7,7 @@ import {
   FiMessageSquare,
 } from "react-icons/fi";
 import axios from "axios";
+import { getUser } from "../../lib/auth";
 
 const url = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
@@ -32,6 +33,7 @@ export default function Announcements() {
         headers: {
           Authorization: `Bearer ${token}`,
         },
+        params: { communityId: getUser().communityId },
       });
       setAnnouncements(response.data.announcements || []);
     } catch (error) {
@@ -59,6 +61,7 @@ export default function Announcements() {
         {
           title: newAnnouncement.title.trim(),
           content: newAnnouncement.content.trim(),
+          communityId: getUser().communityId,
         },
         {
           headers: {
@@ -94,6 +97,7 @@ export default function Announcements() {
         headers: {
           Authorization: `Bearer ${token}`,
         },
+        params: { communityId: getUser().communityId },
       });
 
       // Remove the announcement from the list

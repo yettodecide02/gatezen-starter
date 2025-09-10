@@ -22,6 +22,7 @@ import {
   YAxis,
   CartesianGrid,
 } from "recharts";
+import { getUser } from "../lib/auth";
 
 const COLORS = [
   "#6366f1",
@@ -40,7 +41,6 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
 
   const token = localStorage.getItem("token");
-  const user = JSON.parse(localStorage.getItem("user") || "{}");
 
   useEffect(() => {
     let mounted = true;
@@ -48,12 +48,12 @@ export default function Dashboard() {
       try {
         setLoading(true);
         const res = await axios.get(
-          import.meta.env.VITE_BACKEND_URL + "/resident/dashboard",
+          import.meta.env.VITE_API_URL + "/resident/dashboard",
           {
             headers: {
               Authorization: `Bearer ${token}`,
             },
-            params: { userId: user.id },
+            params: { userId: getUser().id, communityId: getUser().communityId },
           }
         );
         if (!mounted) return;
@@ -68,7 +68,7 @@ export default function Dashboard() {
       }
     })();
     return () => (mounted = false);
-  }, [token, user.id]);
+  }, [token]);
 
   const totalDue = useMemo(
     () =>
