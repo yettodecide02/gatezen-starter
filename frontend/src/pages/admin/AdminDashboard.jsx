@@ -245,7 +245,10 @@ export default function AdminDashboard() {
 
   const handleCreateAnnouncement = async (announcementData) => {
     try {
-      await axios.post(url + "/admin/create-announcement", announcementData, {
+      await axios.post(url + "/admin/create-announcement", {
+        ...announcementData,
+        communityId: getUser().communityId,
+      }, {
         headers: {
           Authorization: `Bearer ${token}`,
         },

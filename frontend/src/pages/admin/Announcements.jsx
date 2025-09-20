@@ -27,13 +27,22 @@ export default function Announcements() {
 
   // Fetch all announcements
   const fetchAnnouncements = async () => {
+    const user = getUser();
+    console.log("User data:", user);
+
+    if (!user || !user.communityId) {
+      setError("User not authenticated or missing community information");
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
       const response = await axios.get(`${url}/admin/announcements`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
-        params: { communityId: getUser().communityId },
+        params: { communityId: user.communityId },
       });
       setAnnouncements(response.data.announcements || []);
     } catch (error) {
@@ -52,6 +61,19 @@ export default function Announcements() {
       return;
     }
 
+    const user = getUser();
+    if (!user || !user.communityId) {
+      setError("User not authenticated or missing community information");
+      return;
+    }
+
+    console.log("Creating announcement with:", {
+      title: newAnnouncement.title.trim(),
+      content: newAnnouncement.content.trim(),
+      communityId: user.communityId,
+      user: user,
+    });
+
     try {
       setCreateLoading(true);
       setError("");
@@ -61,7 +83,7 @@ export default function Announcements() {
         {
           title: newAnnouncement.title.trim(),
           content: newAnnouncement.content.trim(),
-          communityId: getUser().communityId,
+          communityId: user.communityId,
         },
         {
           headers: {
@@ -80,6 +102,7 @@ export default function Announcements() {
       setTimeout(() => setSuccess(""), 3000);
     } catch (error) {
       console.error("Error creating announcement:", error);
+      console.error("Error response:", error.response?.data);
       setError(error.response?.data?.error || "Failed to create announcement");
     } finally {
       setCreateLoading(false);
@@ -92,12 +115,18 @@ export default function Announcements() {
       return;
     }
 
+    const user = getUser();
+    if (!user || !user.communityId) {
+      setError("User not authenticated or missing community information");
+      return;
+    }
+
     try {
       await axios.delete(`${url}/admin/announcements/${id}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
-        params: { communityId: getUser().communityId },
+        params: { communityId: user.communityId },
       });
 
       // Remove the announcement from the list

@@ -268,11 +268,19 @@ router.get("/announcements", authMiddleware, async (req, res) => {
 });
 
 router.post("/create-announcement", authMiddleware, async (req, res) => {
-  const { title, content } = req.body;
+  const { title, content, communityId } = req.body;
   const { userId } = req.user;
 
+  // Validate required fields
+  if (!title || !content) {
+    return res.status(400).json({ error: "Title and content are required" });
+  }
+
+  if (!communityId) {
+    return res.status(400).json({ error: "Community ID is required" });
+  }
+
   try {
-    const { communityId } = req.query;
     const community = await prisma.community.findUnique({
       where: { id: communityId },
     });
