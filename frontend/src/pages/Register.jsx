@@ -1,33 +1,135 @@
-import { useState } from "react";
+import axios from "axios";
+import { useEffect, useState } from "react";
+import {
+  FiEye,
+  FiEyeOff,
+  FiLock,
+  FiLogIn,
+  FiMail,
+  FiUser,
+  FiMapPin,
+} from "react-icons/fi";
 import { Link, useNavigate } from "react-router-dom";
-import { api } from "../api";
-import CaptchaCheckbox from "../components/CaptchaCheckbox";
+import { isAuthed, setUser } from "../lib/auth";
+import GoogleSignin from "../components/GoogleSignin";
+import ReCAPTCHA from "react-google-recaptcha";
 
 export default function Register() {
   const navigate = useNavigate();
-  const [form, setForm] = useState({
-    name: "",
-    email: "",
-    password: "",
-    role: "resident",
-  });
-  const [captcha, setCaptcha] = useState(false);
+
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [selectedCommunity, setSelectedCommunity] = useState("");
+  const [communities, setCommunities] = useState([]);
+  const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [captcha, setCaptcha] = useState(null);
+  const [loadingCommunities, setLoadingCommunities] = useState(false);
   const [err, setErr] = useState("");
-  const [ok, setOk] = useState("");
 
-  const change = (k, v) => setForm(s => ({ ...s, [k]: v }));
+  useEffect(() => {
+    if (isAuthed()) navigate("/dashboard");
+    fetchCommunities();
+  }, [navigate]);
 
+  const fetchCommunities = async () => {
+    setLoadingCommunities(true);
+    setErr(""); 
+
+    try {
+      const response = await axios.get(
+        import.meta.env.VITE_API_URL + "/auth/communities"
+      );
+
+      if (response.data.success) {
+        setCommunities(response.data.data);
+        if (response.data.data.length === 0) {
+          setErr("No communities available. Please contact administrator.");
+        }
+      } else {
+        setErr("Failed to load communities");
+      }
+    } catch (error) {
+      console.error("Error fetching communities:", error);
+      setErr("Failed to load communities. Please try again.");
+    } finally {
+      setLoadingCommunities(false);
+    }
+  };
   const submit = async (e) => {
     e.preventDefault();
-    setErr(""); setOk(""); setLoading(true);
+    setErr("");
+    setLoading(true);
+    if (!captcha) {
+      setErr("Please complete the reCAPTCHA");
+      setLoading(false);
+      return;
+    }
+
+    // Validate community selection
+    if (!selectedCommunity) {
+      setErr("Please select a community to continue");
+      setLoading(false);
+      return;
+    }
+
+    if (communities.length === 0) {
+      setErr("No communities available. Please contact administrator.");
+      setLoading(false);
+      return;
+    }
+
     try {
-      const res = await api("/auth/register", {
-        method: "POST",
-        body: JSON.stringify({ ...form, captchaAccepted: captcha }),
-      });
-      setOk("Registered! You can sign in now.");
-      setTimeout(()=> navigate("/", { replace: true }), 700);
+      const verifyRes = await axios.post(
+        "https://www.google.com/recaptcha/api/siteverify",
+        new URLSearchParams({
+          secret: import.meta.env.VITE_RECAPTCHA_SECRET_KEY,
+          response: captcha,
+        })
+      );
+
+      if (!verifyRes.data.success) {
+        setErr("reCAPTCHA verification failed. Please try again.");
+        setLoading(false);
+        return;
+      }
+
+      const existingUser = await axios.get(
+        import.meta.env.VITE_API_URL + "/auth/existing-user",
+        { params: { email } }
+      );
+
+      if (existingUser.data.exists) {
+        setErr("User with this email already exists. Please login.");
+        return;
+      }
+
+      const res = await axios.post(
+        import.meta.env.VITE_API_URL + "/auth/signup",
+        {
+          name: name,
+          email: email,
+          password: password,
+          communityId: selectedCommunity,
+        }
+      );
+      console.log(res);
+      if (res.status !== 201) {
+        setErr("User registration failed");
+        return;
+      }
+
+      localStorage.setItem("token", res.data.jwttoken);
+
+      if (res.data.user) setUser(res.data.user);
+
+      // Check user status after registration
+      if (res.data.user.status === "PENDING") {
+        navigate("/pending", { replace: true });
+      } else {
+        navigate("/dashboard", { replace: true });
+      }
     } catch (e) {
       setErr(e?.message || "Registration failed");
     } finally {
@@ -42,30 +144,119 @@ export default function Register() {
           <div className="logo-badge">GZ</div>
           <div>
             <div className="brand-name">GateZen</div>
-            <div className="brand-sub">Create your account</div>
+            <div className="brand-sub">Community Portal</div>
           </div>
         </div>
 
         <form onSubmit={submit} className="auth-form">
-          <input className="input" placeholder="Full name" value={form.name} onChange={(e)=>change('name', e.target.value)} required />
-          <input className="input" type="email" placeholder="Email address" value={form.email} onChange={(e)=>change('email', e.target.value)} required />
-          <input className="input" type="password" placeholder="Password" value={form.password} onChange={(e)=>change('password', e.target.value)} required />
+          <label className="field">
+            <span className="field-icon">
+              <FiUser />
+            </span>
+            <input
+              type="text"
+              placeholder="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              autoFocus
+            />
+          </label>
 
-          <select className="input" value={form.role} onChange={(e)=>change('role', e.target.value)}>
-            <option value="resident">Resident</option>
-            <option value="owner">Owner</option>
-            <option value="staff">Staff</option>
-          </select>
+          <label className="field">
+            <span className="field-icon">
+              <FiMail />
+            </span>
+            <input
+              type="email"
+              placeholder="Email address"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoFocus
+            />
+          </label>
 
-          <CaptchaCheckbox checked={captcha} onChange={setCaptcha} />
+          <label className="field">
+            <span className="field-icon">
+              {loadingCommunities ? (
+                <div className="spinner"></div>
+              ) : (
+                <FiMapPin />
+              )}
+            </span>
+            <select
+              value={selectedCommunity}
+              onChange={(e) => setSelectedCommunity(e.target.value)}
+              required
+              disabled={loadingCommunities || communities.length === 0}
+              className={selectedCommunity === "" ? "placeholder" : ""}
+            >
+              <option value="" disabled>
+                {loadingCommunities
+                  ? "Loading communities..."
+                  : communities.length === 0
+                  ? "No communities available"
+                  : "Select your community"}
+              </option>
+              {communities.map((community) => (
+                <option key={community.id} value={community.id}>
+                  {community.name}{" "}
+                  {community.address && `- ${community.address}`}
+                </option>
+              ))}
+            </select>
+            {communities.length === 0 && !loadingCommunities && (
+              <button
+                type="button"
+                className="retry-btn"
+                onClick={fetchCommunities}
+              >
+                Retry
+              </button>
+            )}
+          </label>
 
-          <button className="auth-btn" disabled={loading}>{loading ? "Creating…" : "Create account"}</button>
+          <label className="field">
+            <span className="field-icon">
+              <FiLock />
+            </span>
+            <input
+              type={showPw ? "text" : "password"}
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+            <button
+              type="button"
+              className="pw-toggle"
+              onClick={() => setShowPw(!showPw)}
+            >
+              {showPw ? <FiEyeOff /> : <FiEye />}
+            </button>
+          </label>
+
+          <ReCAPTCHA
+            sitekey={import.meta.env.VITE_RECAPTCHA_SITE_KEY}
+            onChange={(token) => setCaptcha(token)}
+          />
+
+          <button className="auth-btn" type="submit" disabled={loading}>
+            {loading ? (
+              "Signing in…"
+            ) : (
+              <>
+                <FiLogIn /> Sign Up
+              </>
+            )}
+          </button>
+          <GoogleSignin />
 
           {err && <div className="auth-error">{err}</div>}
-          {ok && <div className="auth-success">{ok}</div>}
 
           <div className="auth-foot muted">
-            Already have an account? <Link to="/">Sign in</Link>
+            Already have an account? <Link to="/">Log in</Link>
           </div>
         </form>
       </div>

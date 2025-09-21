@@ -1,75 +1,76 @@
 import { useEffect, useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import { api } from "../api";
-import { setUser, isAuthed } from "../lib/auth";
-import CaptchaCheckbox from "../components/CaptchaCheckbox";
-import MFAInput from "../components/MFAInput";
+import { Link, useNavigate } from "react-router-dom";
 import { FiMail, FiLock, FiEye, FiEyeOff, FiLogIn } from "react-icons/fi";
+import axios from "axios";
+import { isAdmin, isAuthed, setUser } from "../lib/auth";
+import GoogleSignin from "../components/GoogleSignin";
+// import ReCAPTCHA from "react-google-recaptcha";
 
 export default function Login() {
   const navigate = useNavigate();
-  const location = useLocation();
 
-  const [email, setEmail] = useState("admin@gatezen.app");
-  const [password, setPassword] = useState("admin123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
-  const [remember, setRemember] = useState(true);
-  const [captcha, setCaptcha] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [captcha, setCaptcha] = useState(null);
   const [err, setErr] = useState("");
 
-  // MFA state
-  const [requiresMfa, setRequiresMfa] = useState(false);
-  const [mfaHint, setMfaHint] = useState("");
-  const [mfaCode, setMfaCode] = useState("");
-
   useEffect(() => {
-    if (isAuthed()) navigate("/dashboard", { replace: true });
+    if (isAuthed() && isAdmin()) navigate("/admin");
+    else if (isAuthed()) navigate("/dashboard");
   }, [navigate]);
-
-  const tryFinish = (res) => {
-    if (!res?.user) throw new Error("Invalid response");
-    setUser(res.user, { remember });
-    navigate(location.state?.from?.pathname || "/dashboard", { replace: true });
-  };
-
-  const startLogin = async () => {
-    setErr(""); setLoading(true);
-    try {
-      const res = await api("/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ email, password, captchaAccepted: captcha }),
-      });
-
-      if (res?.requiresMfa) {
-        setRequiresMfa(true);
-        setMfaHint(res?.hint);
-        return;
-      }
-      tryFinish(res);
-    } catch (e) {
-      setErr(e?.message || "Login failed");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!captcha) { setErr("Please complete the CAPTCHA"); return; }
-    await startLogin();
-  };
-
-  const verifyMfa = async () => {
-    setErr(""); setLoading(true);
+    setLoading(true);
+    // if (!captcha) {
+    //   setErr("Please complete the reCAPTCHA");
+    //   setLoading(false);
+    //   return;
+    // }
     try {
-      const res = await api("/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ email, password, captchaAccepted: captcha, mfaCode }),
-      });
-      tryFinish(res);
+      // const verifyRes = await axios.post(
+      //   "https://www.google.com/recaptcha/api/siteverify",
+      //   new URLSearchParams({
+      //     secret: import.meta.env.VITE_RECAPTCHA_SECRET_KEY,
+      //     response: captcha,
+      //   })
+      // );
+
+      // if (!verifyRes.data.success) {
+      //   setErr("reCAPTCHA verification failed. Please try again.");
+      //   setLoading(false);
+      //   return;
+      // }
+
+      const res = await axios.post(
+        import.meta.env.VITE_API_URL + "/auth/login",
+        {
+          email: email,
+          password: password,
+          "g-recaptcha-response": captcha,
+        }
+      );
+
+      if (!res) {
+        setErr("Invalid email or password");
+        return;
+      }
+
+      localStorage.setItem("token", res.data.jwttoken);
+      if (res.data.user) setUser(res.data.user);
+
+      // Check user status
+      if (res.data.user.status === "PENDING") {
+        navigate("/pending", { replace: true });
+      } else if (res.data.user.role === "ADMIN") {
+        navigate("/admin", { replace: true });
+      } else {
+        navigate("/dashboard", { replace: true });
+      }
     } catch (e) {
-      setErr(e?.message || "MFA verification failed");
+      setErr(e.response?.data?.error || "Login failed");
     } finally {
       setLoading(false);
     }
@@ -86,63 +87,65 @@ export default function Login() {
           </div>
         </div>
 
-        {!requiresMfa ? (
-          <form onSubmit={submit} className="auth-form">
-            <label className="field">
-              <span className="field-icon"><FiMail /></span>
-              <input
-                type="email"
-                placeholder="Email address"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                autoFocus
-              />
-            </label>
+        <form onSubmit={submit} className="auth-form">
+          <label className="field">
+            <span className="field-icon">
+              <FiMail />
+            </span>
+            <input
+              type="email"
+              placeholder="Email address"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoFocus
+            />
+          </label>
 
-            <label className="field">
-              <span className="field-icon"><FiLock /></span>
-              <input
-                type={showPw ? "text" : "password"}
-                placeholder="Password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
-              <button type="button" className="pw-toggle" onClick={() => setShowPw(!showPw)}>
-                {showPw ? <FiEyeOff /> : <FiEye />}
-              </button>
-            </label>
-
-            <div className="auth-row">
-              <label className="remember">
-                <input type="checkbox" checked={remember} onChange={(e)=>setRemember(e.target.checked)} />
-                Remember me
-              </label>
-              <Link className="muted" to="/forgot">Forgot password?</Link>
-            </div>
-
-            <CaptchaCheckbox checked={captcha} onChange={setCaptcha} />
-
-            <button className="auth-btn" disabled={loading}>
-              {loading ? "Signing in…" : (<><FiLogIn /> Sign In</>)}
+          <label className="field">
+            <span className="field-icon">
+              <FiLock />
+            </span>
+            <input
+              type={showPw ? "text" : "password"}
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+            <button
+              type="button"
+              className="pw-toggle"
+              onClick={() => setShowPw(!showPw)}
+            >
+              {showPw ? <FiEyeOff /> : <FiEye />}
             </button>
+          </label>
+          <div className="auth-forget">
+            <Link to="/forgot-password">Forgot password?</Link>
+          </div>
+          {/* <ReCAPTCHA
+            sitekey={import.meta.env.VITE_RECAPTCHA_SITE_KEY}
+            onChange={(token) => setCaptcha(token)}
+          /> */}
 
-            {err && <div className="auth-error">{err}</div>}
+          <button className="auth-btn" type="submit" disabled={loading}>
+            {loading ? (
+              "Signing in…"
+            ) : (
+              <>
+                <FiLogIn /> Sign In
+              </>
+            )}
+          </button>
+          <GoogleSignin />
 
-            <div className="auth-foot muted">
-              New here? <Link to="/register">Create an account</Link>
-            </div>
-          </form>
-        ) : (
-          <MFAInput
-            value={mfaCode}
-            onChange={setMfaCode}
-            onSubmit={verifyMfa}
-            onCancel={()=> setRequiresMfa(false)}
-            hint={mfaHint}
-          />
-        )}
+          {err && <div className="auth-error">{err}</div>}
+
+          <div className="auth-foot muted">
+            New here? <Link to="/register">Create an account</Link>
+          </div>
+        </form>
       </div>
     </div>
   );

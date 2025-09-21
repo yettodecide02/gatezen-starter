@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   FiUser,
   FiPhone,
@@ -7,7 +7,7 @@ import {
   FiUsers,
   FiPlus,
   FiTrash2,
-  FiTruck,     // ✅ use truck instead of the non-existent FiCar
+  FiTruck,     
   FiShield,
   FiKey,
   FiBell,
@@ -59,6 +59,7 @@ export default function Profile() {
       getUser() || {
         id: "u1",
         name: "Admin",
+        Community: "Default Community",
         email: "admin@gatezen.app",
         phone: "",
         address: {
@@ -90,7 +91,6 @@ export default function Profile() {
   const [pw, setPw] = useState({ current: "", next: "", confirm: "" });
 
   useEffect(() => {
-    // sync localStorage snapshot whenever user state changes
     setUser(user);
   }, [user]);
 
@@ -130,21 +130,21 @@ export default function Profile() {
           />
         </label>
         <label className="item">
+          <div className="item-title"><FiMail /> Community</div>
+          <input
+            className="select"
+            value={user.communityName}
+            onChange={(e) => setUserState({ ...user, communityName: e.target.value })}
+            placeholder="Your community"
+          />
+        </label>
+        <label className="item">
           <div className="item-title"><FiMail /> Email</div>
           <input
             className="select"
             value={user.email}
             onChange={(e) => setUserState({ ...user, email: e.target.value })}
             placeholder="you@example.com"
-          />
-        </label>
-        <label className="item">
-          <div className="item-title"><FiPhone /> Phone</div>
-          <input
-            className="select"
-            value={user.phone || ""}
-            onChange={(e) => setUserState({ ...user, phone: e.target.value })}
-            placeholder="+91 90000 00000"
           />
         </label>
 

@@ -1,6 +1,5 @@
 // frontend/src/pages/Maintenance.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api } from "../api";
 import {
   FiTool,
   FiPlus,
@@ -12,6 +11,7 @@ import {
   FiAlertCircle,
 } from "react-icons/fi";
 import Toast from "../components/Toast";
+import axios from "axios";
 
 const STATUS_LABEL = {
   submitted: "Submitted",
@@ -21,9 +21,24 @@ const STATUS_LABEL = {
 
 function StatusChip({ status }) {
   const map = {
-    submitted: { bg: "#fffbeb", clr: "#92400e", br: "#fde68a", icon: <FiClock /> },
-    in_progress: { bg: "#eff6ff", clr: "#1e40af", br: "#bfdbfe", icon: <FiAlertCircle /> },
-    resolved: { bg: "#ecfdf5", clr: "#065f46", br: "#a7f3d0", icon: <FiCheckCircle /> },
+    submitted: {
+      bg: "#fffbeb",
+      clr: "#92400e",
+      br: "#fde68a",
+      icon: <FiClock />,
+    },
+    in_progress: {
+      bg: "#eff6ff",
+      clr: "#1e40af",
+      br: "#bfdbfe",
+      icon: <FiAlertCircle />,
+    },
+    resolved: {
+      bg: "#ecfdf5",
+      clr: "#065f46",
+      br: "#a7f3d0",
+      icon: <FiCheckCircle />,
+    },
   };
   const s = map[status] || map.submitted;
   return (
@@ -63,7 +78,9 @@ export default function Maintenance() {
 
   const user = useMemo(() => {
     try {
-      return JSON.parse(localStorage.getItem("user")) || { id: "u1", name: "Admin" };
+      return (
+        JSON.parse(localStorage.getItem("user")) || { id: "u1", name: "Admin" }
+      );
     } catch {
       return { id: "u1", name: "Admin" };
     }
@@ -76,34 +93,58 @@ export default function Maintenance() {
   }
 
   async function load() {
-    setLoading(true);
-    const list = await api(`/maintenance?userId=${user.id}`);
-    setTickets(list);
-    setSelected((prev) => (prev ? list.find((t) => t.id === prev.id) || list[0] : list[0]) || null);
-    setLoading(false);
+    try {
+      setLoading(true);
+      const response = await axios.get(
+        (import.meta.env.VITE_API_URL || "http://localhost:5000") +
+          `/resident/maintenance`,
+        {
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("token")}` || "",
+          },
+          params: {
+            communityId: user.communityId,
+            userId: user.id,
+          },
+        }
+      );
+
+      // Ensure the response is an array
+      const list = Array.isArray(response.data) ? response.data : [];
+      setTickets(list);
+      setSelected(
+        (prev) =>
+          (prev ? list.find((t) => t.id === prev.id) || list[0] : list[0]) ||
+          null
+      );
+    } catch (error) {
+      console.error("Error loading tickets:", error);
+      setTickets([]); // Set empty array on error
+      setSelected(null);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
     load();
-    // SSE live updates
     const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
     const es = new EventSource(`${API_URL}/events`);
     const handler = (ev) => {
       if (ev.type !== "message") return;
       try {
         const parsed = JSON.parse(ev.data);
-        // only care about maintenance events; backend uses named event "maintenance"
-        // Vite's EventSource delivers named events via addEventListener; add both
       } catch {}
     };
-    // listen named event
     const onMaint = (ev) => {
       const data = JSON.parse(ev.data);
-      // If the event relates to your user’s tickets or global, refresh list
-      if (!selected || (data.ticketId && selected.id === data.ticketId) || data.ticket) {
+      if (
+        !selected ||
+        (data.ticketId && selected.id === data.ticketId) ||
+        data.ticket
+      ) {
         load();
       }
-      // small feedback
       const label =
         data.action === "status"
           ? `Ticket status: ${data.status}`
@@ -116,71 +157,142 @@ export default function Maintenance() {
     };
     es.addEventListener("maintenance", onMaint);
     es.onmessage = handler;
-    es.onerror = () => {
-      // ignore (dev server restarts etc.)
-    };
+    es.onerror = () => {};
     return () => {
       es.removeEventListener("maintenance", onMaint);
       es.close();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.id]);
 
   async function submitTicket(e) {
     e.preventDefault();
-    const payload = {
-      userId: user.id,
-      title,
-      category,
-      description: desc,
-      images: imgUrl ? [imgUrl] : [],
-    };
-    const t = await api("/maintenance", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    setTitle("");
-    setCategory("General");
-    setDesc("");
-    setImgUrl("");
-    setTickets((prev) => [t, ...prev]);
-    setSelected(t);
-    showToast("Ticket submitted");
+    try {
+      const payload = {
+        userId: user.id,
+        communityId: user.communityId,
+        title,
+        category,
+        description: desc,
+        images: imgUrl ? [imgUrl] : [],
+      };
+      const response = await axios.post(
+        `${import.meta.env.VITE_API_URL}/resident/maintenance`,
+        payload,
+        {
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("token")}`,
+          },
+        }
+      );
+      const newTicket = response.data;
+      setTitle("");
+      setCategory("General");
+      setDesc("");
+      setImgUrl("");
+      setTickets((prev) =>
+        Array.isArray(prev) ? [newTicket, ...prev] : [newTicket]
+      );
+      setSelected(newTicket);
+      showToast("Ticket submitted");
+    } catch (error) {
+      console.error("Error submitting ticket:", error);
+      showToast("Error submitting ticket");
+    }
   }
 
   async function addComment() {
     if (!selected || !message.trim()) return;
-    const c = await api(`/maintenance/${selected.id}/comments`, {
-      method: "POST",
-      body: JSON.stringify({ userId: user.id, name: user.name, text: message.trim() }),
-    });
-    setTickets((prev) =>
-      prev.map((t) => (t.id === selected.id ? { ...t, comments: [...t.comments, c] } : t))
-    );
-    setSelected((s) => ({ ...s, comments: [...(s?.comments || []), c] }));
-    setMessage("");
+    try {
+      const response = await axios.post(
+        `${import.meta.env.VITE_API_URL}/resident/maintenance/${
+          selected.id
+        }/comments`,
+        {
+          userId: user.id,
+          name: user.name,
+          text: message.trim(),
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("token")}`,
+          },
+        }
+      );
+      const newComment = response.data;
+      setTickets((prev) =>
+        Array.isArray(prev)
+          ? prev.map((t) =>
+              t.id === selected.id
+                ? { ...t, comments: [...(t.comments || []), newComment] }
+                : t
+            )
+          : prev
+      );
+      setSelected((s) => ({
+        ...s,
+        comments: [...(s?.comments || []), newComment],
+      }));
+      setMessage("");
+    } catch (error) {
+      console.error("Error adding comment:", error);
+      showToast("Error adding comment");
+    }
   }
 
   async function changeStatus(next) {
     if (!selected) return;
-    const updated = await api(`/maintenance/${selected.id}/status`, {
-      method: "PATCH",
-      body: JSON.stringify({ status: next }),
-    });
-    setTickets((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
-    setSelected(updated);
-    showToast(`Marked as: ${STATUS_LABEL[next]}`);
+    try {
+      const response = await axios.patch(
+        `${import.meta.env.VITE_API_URL}/resident/maintenance/${
+          selected.id
+        }/status`,
+        {
+          status: next,
+          communityId: user.communityId,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("token")}`,
+          },
+        }
+      );
+      const updated = response.data;
+      setTickets((prev) =>
+        Array.isArray(prev)
+          ? prev.map((t) => (t.id === updated.id ? updated : t))
+          : prev
+      );
+      setSelected(updated);
+      showToast(`Marked as: ${STATUS_LABEL[next]}`);
+    } catch (error) {
+      console.error("Error changing status:", error);
+      showToast("Error changing status");
+    }
   }
 
   async function attachImage() {
     if (!selected || !imgUrl) return;
-    await api(`/maintenance/${selected.id}/images`, {
-      method: "POST",
-      body: JSON.stringify({ imageUrl: imgUrl }),
-    });
-    setImgUrl("");
-    load();
-    showToast("Image attached");
+    try {
+      await axios.post(
+        `${import.meta.env.VITE_API_URL}/resident/maintenance/${
+          selected.id
+        }/images`,
+        {
+          imageUrl: imgUrl,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("token")}`,
+          },
+        }
+      );
+      setImgUrl("");
+      load();
+      showToast("Image attached");
+    } catch (error) {
+      console.error("Error attaching image:", error);
+      showToast("Error attaching image");
+    }
   }
 
   return (
@@ -248,7 +360,12 @@ export default function Maintenance() {
                 value={imgUrl}
                 onChange={(e) => setImgUrl(e.target.value)}
               />
-              <button type="button" className="btn outline" onClick={attachImage} disabled={!selected || !imgUrl}>
+              <button
+                type="button"
+                className="btn outline"
+                onClick={attachImage}
+                disabled={!selected || !imgUrl}
+              >
                 <FiImage /> Attach
               </button>
             </div>
@@ -264,28 +381,29 @@ export default function Maintenance() {
 
           <div className="stack" style={{ maxHeight: 420, overflow: "auto" }}>
             {loading && <div className="muted">Loading…</div>}
-            {!loading && tickets.length === 0 && (
+            {!loading && (!Array.isArray(tickets) || tickets.length === 0) && (
               <div className="muted">No requests yet.</div>
             )}
-            {tickets.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => setSelected(t)}
-                className="item"
-                style={{
-                  textAlign: "left",
-                  borderColor: selected?.id === t.id ? "#c7d2fe" : undefined,
-                  background: selected?.id === t.id ? "#eef2ff" : undefined,
-                  cursor: "pointer",
-                }}
-              >
-                <div className="item-title">{t.title}</div>
-                <div className="item-sub">
-                  {t.category} • {new Date(t.createdAt).toLocaleString()}
-                </div>
-                <StatusChip status={t.status} />
-              </button>
-            ))}
+            {Array.isArray(tickets) &&
+              tickets.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setSelected(t)}
+                  className="item"
+                  style={{
+                    textAlign: "left",
+                    borderColor: selected?.id === t.id ? "#c7d2fe" : undefined,
+                    background: selected?.id === t.id ? "#eef2ff" : undefined,
+                    cursor: "pointer",
+                  }}
+                >
+                  <div className="item-title">{t.title}</div>
+                  <div className="item-sub">
+                    {t.category} • {new Date(t.createdAt).toLocaleString()}
+                  </div>
+                  <StatusChip status={t.status} />
+                </button>
+              ))}
           </div>
         </div>
 
@@ -311,7 +429,9 @@ export default function Maintenance() {
               <div className="list-item">
                 <div className="list-body">
                   <strong>Description</strong>
-                  <div style={{ marginTop: 6 }}>{selected.description || "—"}</div>
+                  <div style={{ marginTop: 6 }}>
+                    {selected.description || "—"}
+                  </div>
                 </div>
               </div>
 
@@ -322,7 +442,8 @@ export default function Maintenance() {
                   <div
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+                      gridTemplateColumns:
+                        "repeat(auto-fit, minmax(120px, 1fr))",
                       gap: 10,
                       marginTop: 10,
                     }}
@@ -339,7 +460,9 @@ export default function Maintenance() {
                             borderRadius: 10,
                             border: "1px solid #e5e7eb",
                           }}
-                          onError={(e) => (e.currentTarget.style.display = "none")}
+                          onError={(e) =>
+                            (e.currentTarget.style.display = "none")
+                          }
                         />
                       </a>
                     ))}
@@ -375,7 +498,10 @@ export default function Maintenance() {
                 <button
                   className="btn outline"
                   onClick={() => changeStatus("in_progress")}
-                  disabled={selected.status === "in_progress" || selected.status === "resolved"}
+                  disabled={
+                    selected.status === "in_progress" ||
+                    selected.status === "resolved"
+                  }
                 >
                   Start Progress
                 </button>
@@ -433,8 +559,8 @@ export default function Maintenance() {
                       </button>
                     </div>
                     <div className="muted small">
-                      <FiPaperclip style={{ verticalAlign: "-2px" }} /> Use the image
-                      URL above to attach photos, or paste a data-URL.
+                      <FiPaperclip style={{ verticalAlign: "-2px" }} /> Use the
+                      image URL above to attach photos, or paste a data-URL.
                     </div>
                   </div>
                 </div>

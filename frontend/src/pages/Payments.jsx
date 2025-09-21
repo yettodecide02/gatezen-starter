@@ -1,5 +1,5 @@
+import axios from "axios";
 import React, { useEffect, useMemo, useState } from "react";
-import { api } from "../api";
 import { FiCreditCard, FiCheckCircle, FiFileText, FiRepeat, FiZap, FiAlertCircle } from "react-icons/fi";
 
 export default function Payments() {
@@ -12,9 +12,9 @@ export default function Payments() {
   const history = useMemo(() => items.filter(i => i.status !== "due"), [items]);
 
   const load = async () => {
-    const data = await api("/payments");
+    const data = await axios.get((import.meta.env.VITE_API_URL || "http://localhost:5000") + "/resident/payments").then(res => res.data);
     setItems(data);
-    const ap = await api("/payments/autopay");
+    const ap = await axios.get((import.meta.env.VITE_API_URL || "http://localhost:5000") + "/resident/payments/autopay").then(res => res.data);
     setAutopay(ap);
   };
 
@@ -24,9 +24,9 @@ export default function Payments() {
     try {
       setBusy(true);
       // Use new unified checkout endpoint (provider can be mock/stripe/razorpay)
-      const res = await api("/payments/checkout", {
-        method: "POST",
-        body: JSON.stringify({ id, provider })
+      const res = await axios.post((import.meta.env.VITE_API_URL || "http://localhost:5000") + "/resident/payments/checkout", {
+        id,
+        provider
       });
       if (provider === "mock") {
         // Payment completed server-side
@@ -57,7 +57,7 @@ export default function Payments() {
   const downloadReceipt = async (id) => {
     try {
       const base = import.meta.env.VITE_API_URL || "http://localhost:4000";
-      const resp = await fetch(`${base}/payments/${id}/receipt`);
+      const resp = await axios.get(`${base}/payments/${id}/receipt`);
       if (!resp.ok) {
         const t = await resp.text();
         throw new Error(t || resp.statusText);
@@ -76,11 +76,8 @@ export default function Payments() {
 
   const toggleAutopay = async () => {
     const next = { autopay: !autopay.autopay, provider, last4: autopay.last4 || "0000" };
-    const res = await api("/payments/autopay", {
-      method: "POST",
-      body: JSON.stringify(next)
-    });
-    setAutopay(res);
+    const res = await axios.post("/resident/payments/autopay", next);
+    setAutopay(res.data);
   };
 
   return (

@@ -8,15 +8,21 @@
     "dev": "nodemon src/index.js"
   },
   "dependencies": {
+    "@prisma/client": "^6.15.0",
+    "axios": "^1.11.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^7.0.5",
     "pdfkit": "^0.17.1",
+    "qrcode": "^1.5.4",
     "razorpay": "^2.9.6",
     "stripe": "^18.4.0",
     "uuid": "^9.0.1"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1"
+    "nodemon": "^3.0.1",
+    "prisma": "^6.15.0"
   }
 }

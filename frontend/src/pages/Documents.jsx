@@ -1,5 +1,5 @@
+import axios from "axios";
 import { useEffect, useMemo, useState } from "react";
-import { api } from "../api";
 import { FiFileText, FiUpload, FiSearch, FiDownload, FiTrash2, FiFilter } from "react-icons/fi";
 
 async function fileToBase64(file) {
@@ -62,7 +62,7 @@ export default function Documents() {
         data: b64,
         mime: f.type || "application/octet-stream"
       };
-      await api("/documents", { method:"POST", body: JSON.stringify(body) });
+      await axios.post((import.meta.env.VITE_API_URL || "http://localhost:5000") + "/documents", body);
       setMsg("Upload complete.");
       await load();
     } catch (err) {
@@ -75,7 +75,7 @@ export default function Documents() {
 
   async function del(id) {
     if (!confirm("Delete document?")) return;
-    await api(`/documents/${id}`, { method:"DELETE" });
+    await axios.delete((import.meta.env.VITE_API_URL || "http://localhost:5000") + `/documents/${id}`);
     await load();
   }
 

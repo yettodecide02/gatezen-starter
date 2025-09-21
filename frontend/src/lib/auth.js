@@ -16,6 +16,7 @@ export function getUser() {
 
 export function clearUser() {
   localStorage.removeItem(KEY);
+  localStorage.removeItem('token');
 }
 
 export function isAuthed() {
@@ -24,5 +25,5 @@ export function isAuthed() {
 
 export function isAdmin() {
   const u = getUser();
-  return !!u && u.role === 'admin';
+  return !!u && u.role === 'ADMIN';
 }
