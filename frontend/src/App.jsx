@@ -36,6 +36,9 @@ import supabase from "./lib/supabase.js";
 import ForgotPassword from "./pages/ForgotPassword.jsx";
 import Announcements from "./pages/admin/Announcements.jsx";
 import Community from "./pages/admin/Community.jsx";
+import MaintenanceAdmin from "./pages/admin/Maintenance.jsx";
+import BookingsAdmin from "./pages/admin/Bookings.jsx";
+import PaymentsAdmin from "./pages/admin/Payments.jsx";
 
 function Shell({ children }) {
   const navigate = useNavigate();
@@ -319,6 +322,36 @@ export default function App() {
           <ProtectedRoute>
             <AdminShell>
               <Announcements />
+            </AdminShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/maintenance"
+        element={
+          <ProtectedRoute>
+            <AdminShell>
+              <MaintenanceAdmin />
+            </AdminShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/bookings"
+        element={
+          <ProtectedRoute>
+            <AdminShell>
+              <BookingsAdmin />
+            </AdminShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/payments"
+        element={
+          <ProtectedRoute>
+            <AdminShell>
+              <PaymentsAdmin />
             </AdminShell>
           </ProtectedRoute>
         }

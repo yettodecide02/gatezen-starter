@@ -47,6 +47,8 @@ export default function Dashboard() {
     (async () => {
       try {
         setLoading(true);
+        if(ann.length !== 0 && payments.length !== 0 && maintenance.length !== 0 && bookings.length !== 0) return;
+        if (!token) return;
         const res = await axios.get(
           import.meta.env.VITE_API_URL + "/resident/dashboard",
           {

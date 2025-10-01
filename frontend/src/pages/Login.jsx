@@ -4,7 +4,7 @@ import { FiMail, FiLock, FiEye, FiEyeOff, FiLogIn } from "react-icons/fi";
 import axios from "axios";
 import { isAdmin, isAuthed, setUser } from "../lib/auth";
 import GoogleSignin from "../components/GoogleSignin";
-// import ReCAPTCHA from "react-google-recaptcha";
+import ReCAPTCHA from "react-google-recaptcha";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -24,26 +24,12 @@ export default function Login() {
   const submit = async (e) => {
     e.preventDefault();
     setLoading(true);
-    // if (!captcha) {
-    //   setErr("Please complete the reCAPTCHA");
-    //   setLoading(false);
-    //   return;
-    // }
+    if (!captcha) {
+      setErr("Please complete the reCAPTCHA");
+      setLoading(false);
+      return;
+    }
     try {
-      // const verifyRes = await axios.post(
-      //   "https://www.google.com/recaptcha/api/siteverify",
-      //   new URLSearchParams({
-      //     secret: import.meta.env.VITE_RECAPTCHA_SECRET_KEY,
-      //     response: captcha,
-      //   })
-      // );
-
-      // if (!verifyRes.data.success) {
-      //   setErr("reCAPTCHA verification failed. Please try again.");
-      //   setLoading(false);
-      //   return;
-      // }
-
       const res = await axios.post(
         import.meta.env.VITE_API_URL + "/auth/login",
         {
@@ -124,10 +110,10 @@ export default function Login() {
           <div className="auth-forget">
             <Link to="/forgot-password">Forgot password?</Link>
           </div>
-          {/* <ReCAPTCHA
+          <ReCAPTCHA
             sitekey={import.meta.env.VITE_RECAPTCHA_SITE_KEY}
             onChange={(token) => setCaptcha(token)}
-          /> */}
+          />
 
           <button className="auth-btn" type="submit" disabled={loading}>
             {loading ? (

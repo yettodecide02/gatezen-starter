@@ -35,7 +35,7 @@ export default function Register() {
 
   const fetchCommunities = async () => {
     setLoadingCommunities(true);
-    setErr(""); 
+    setErr("");
 
     try {
       const response = await axios.get(
@@ -81,20 +81,6 @@ export default function Register() {
     }
 
     try {
-      const verifyRes = await axios.post(
-        "https://www.google.com/recaptcha/api/siteverify",
-        new URLSearchParams({
-          secret: import.meta.env.VITE_RECAPTCHA_SECRET_KEY,
-          response: captcha,
-        })
-      );
-
-      if (!verifyRes.data.success) {
-        setErr("reCAPTCHA verification failed. Please try again.");
-        setLoading(false);
-        return;
-      }
-
       const existingUser = await axios.get(
         import.meta.env.VITE_API_URL + "/auth/existing-user",
         { params: { email } }
@@ -112,6 +98,7 @@ export default function Register() {
           email: email,
           password: password,
           communityId: selectedCommunity,
+          "g-recaptcha-response": captcha, // Send reCAPTCHA token to backend for verification
         }
       );
       console.log(res);
@@ -131,7 +118,7 @@ export default function Register() {
         navigate("/dashboard", { replace: true });
       }
     } catch (e) {
-      setErr(e?.message || "Registration failed");
+      setErr(e.response?.data?.error || "Registration failed");
     } finally {
       setLoading(false);
     }

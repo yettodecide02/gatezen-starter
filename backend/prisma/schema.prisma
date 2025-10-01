@@ -14,14 +14,15 @@ model Community {
   address          String?
   createdAt        DateTime                @default(now())
   updatedAt        DateTime                @updatedAt
-  facilityConfigs  FacilityConfiguration[] @relation("FacilityConfigs")
-  actualFacilities Facility[]              @relation("CommunityFacilities")
-  users            User[]
-  tickets          Ticket[]
   announcements    Announcements[]
-  payments         Payments[]
-  events           Event[]
   bookings         Booking[]
+  events           Event[]
+  actualFacilities Facility[]              @relation("CommunityFacilities")
+  facilityConfigs  FacilityConfiguration[] @relation("FacilityConfigs")
+  payments         Payments[]
+  tickets          Ticket[]
+  users            User[]
+  visitors         Visitor[]  
 }
 
 model User {
@@ -40,6 +41,7 @@ model User {
   rsvp        RSVP[]
   tickets     Ticket[]
   community   Community  @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  visitors    Visitor[]  @relation("UserVisitors")  // <-- addeeeeed
 }
 
 model FacilityConfiguration {
@@ -56,8 +58,8 @@ model FacilityConfiguration {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   communityId    String
-  community      Community    @relation("FacilityConfigs", fields: [communityId], references: [id], onDelete: Cascade)
   facilities     Facility[]
+  community      Community    @relation("FacilityConfigs", fields: [communityId], references: [id], onDelete: Cascade)
 
   @@unique([communityId, facilityType])
 }
@@ -70,9 +72,9 @@ model Facility {
   slotMins        Int
   capacity        Int                    @default(10)
   communityId     String
-  facilityType    FacilityType
   configurationId String?
   createdAt       DateTime               @default(now())
+  facilityType    FacilityType
   updatedAt       DateTime               @updatedAt
   bookings        Booking[]
   community       Community              @relation("CommunityFacilities", fields: [communityId], references: [id], onDelete: Cascade)
@@ -92,8 +94,8 @@ model Ticket {
   comments    Comment[]
   history     History[]
   images      Image[]
-  user        User         @relation(fields: [userId], references: [id])
   community   Community    @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  user        User         @relation(fields: [userId], references: [id])
 }
 
 model Comment {
@@ -131,13 +133,13 @@ model Booking {
   status      BookingStatus @default(CONFIRMED)
   userId      String
   facilityId  String
-  communityId String
   peopleCount Int           @default(1)
+  communityId String
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
+  community   Community     @relation(fields: [communityId], references: [id], onDelete: Cascade)
   facility    Facility      @relation(fields: [facilityId], references: [id])
   user        User          @relation(fields: [userId], references: [id])
-  community   Community     @relation(fields: [communityId], references: [id], onDelete: Cascade)
 
   @@index([facilityId, startsAt])
   @@index([communityId, startsAt])
@@ -153,8 +155,8 @@ model Event {
   communityId String
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
-  rsvps       RSVP[]
   community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  rsvps       RSVP[]
 }
 
 model RSVP {
@@ -182,18 +184,20 @@ model Payments {
   id          String    @id @default(uuid())
   amount      Float
   method      String
-  status      String
   createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
   userId      String
   communityId String
-  user        User      @relation(fields: [userId], references: [id])
+  updatedAt   DateTime  @updatedAt
+  status      String
   community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id])
 }
 
 enum UserRole {
   ADMIN
   RESIDENT
+  GATEKEEPER
+  STAFF
 }
 
 enum UserStatus {
@@ -206,6 +210,7 @@ enum TicketStatus {
   SUBMITTED
   IN_PROGRESS
   RESOLVED
+  CANCELLED
 }
 
 enum BookingStatus {
@@ -239,4 +244,39 @@ enum PriceType {
   PER_WEEK
   PER_MONTH
   ONE_TIME
+}
+
+enum VisitorType {
+  GUEST
+  DELIVERY
+  CAB_AUTO
+}
+
+enum VisitorStatus {
+  PENDING
+  APPROVED
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELLED
+}
+
+model Visitor {
+  id           String        @id @default(uuid())
+  name         String
+  email        String?
+  type         VisitorType
+  expectedAt   DateTime
+  purpose      String?
+  vehicle      String?
+  notes        String?
+  status       VisitorStatus @default(PENDING)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  residentId   String
+  communityId  String
+  resident     User          @relation("UserVisitors", fields: [residentId], references: [id], onDelete: Cascade)
+  community    Community     @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([communityId, expectedAt])
 }

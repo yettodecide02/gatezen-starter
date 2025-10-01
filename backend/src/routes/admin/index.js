@@ -5,6 +5,15 @@ import { UserStatus, FacilityType, PriceType } from "@prisma/client";
 import { authMiddleware } from "../../middleware/auth.js";
 
 const router = express.Router();
+router.use(authMiddleware);
+router.use(checkAuth);
+
+function checkAuth(req, res, next) {
+  if (req.user.role !== "ADMIN") {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  next();
+}
 
 const transporter = nodemailer.createTransport({
   service: "gmail",
@@ -15,7 +24,7 @@ const transporter = nodemailer.createTransport({
 });
 
 // Get all data for admin dashboard
-router.get("/dashboard", authMiddleware, async (req, res) => {
+router.get("/dashboard", async (req, res) => {
   try {
     const { communityId } = req.query;
     // First, get the community (assuming single community for now)
@@ -76,7 +85,7 @@ router.get("/dashboard", authMiddleware, async (req, res) => {
 });
 
 // Resident management routes
-router.get("/resident-requests", authMiddleware, async (req, res) => {
+router.get("/resident-requests", async (req, res) => {
   try {
     const { communityId } = req.query;
     const community = await prisma.community.findUnique({
@@ -101,7 +110,7 @@ router.get("/resident-requests", authMiddleware, async (req, res) => {
   }
 });
 
-router.post("/approve-resident", authMiddleware, async (req, res) => {
+router.post("/approve-resident", async (req, res) => {
   const { userId } = req.body;
 
   try {
@@ -125,7 +134,7 @@ router.post("/approve-resident", authMiddleware, async (req, res) => {
   }
 });
 
-router.post("/reject-resident", authMiddleware, async (req, res) => {
+router.post("/reject-resident", async (req, res) => {
   const { userId } = req.body;
 
   try {
@@ -149,7 +158,7 @@ router.post("/reject-resident", authMiddleware, async (req, res) => {
   }
 });
 
-router.get("/residents", authMiddleware, async (req, res) => {
+router.get("/residents", async (req, res) => {
   try {
     const { communityId } = req.query;
     const community = await prisma.community.findUnique({
@@ -174,7 +183,7 @@ router.get("/residents", authMiddleware, async (req, res) => {
 });
 
 // Bookings management
-router.get("/bookings", authMiddleware, async (req, res) => {
+router.get("/bookings", async (req, res) => {
   try {
     const { communityId } = req.query;
     const community = await prisma.community.findUnique({
@@ -204,7 +213,7 @@ router.get("/bookings", authMiddleware, async (req, res) => {
 });
 
 // Maintenance management
-router.get("/maintenance", authMiddleware, async (req, res) => {
+router.get("/maintenance", async (req, res) => {
   try {
     const { communityId } = req.query;
     const community = await prisma.community.findUnique({
@@ -226,7 +235,7 @@ router.get("/maintenance", authMiddleware, async (req, res) => {
   }
 });
 
-router.post("/maintenance/update", authMiddleware, async (req, res) => {
+router.post("/maintenance/update", async (req, res) => {
   const { ticketId, status } = req.body;
 
   try {
@@ -246,7 +255,7 @@ router.post("/maintenance/update", authMiddleware, async (req, res) => {
 });
 
 // Announcements management
-router.get("/announcements", authMiddleware, async (req, res) => {
+router.get("/announcements", async (req, res) => {
   try {
     const { communityId } = req.query;
     const community = await prisma.community.findUnique({
@@ -267,7 +276,7 @@ router.get("/announcements", authMiddleware, async (req, res) => {
   }
 });
 
-router.post("/create-announcement", authMiddleware, async (req, res) => {
+router.post("/create-announcement", async (req, res) => {
   const { title, content, communityId } = req.body;
   const { userId } = req.user;
 
@@ -305,7 +314,7 @@ router.post("/create-announcement", authMiddleware, async (req, res) => {
   }
 });
 
-router.delete("/announcements/:id", authMiddleware, async (req, res) => {
+router.delete("/announcements/:id", async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -323,7 +332,7 @@ router.delete("/announcements/:id", authMiddleware, async (req, res) => {
 // === COMMUNITY CONFIGURATION ROUTES ===
 
 // Get community configuration
-router.get("/community", authMiddleware, async (req, res) => {
+router.get("/community", async (req, res) => {
   try {
     // Get the user's community ID from the authenticated user
     const user = await prisma.user.findUnique({
@@ -379,7 +388,7 @@ router.get("/community", authMiddleware, async (req, res) => {
 });
 
 // Create or update community configuration
-router.post("/community", authMiddleware, async (req, res) => {
+router.post("/community", async (req, res) => {
   try {
     const { name, description, address, facilities, communityId } = req.body;
 
@@ -482,7 +491,7 @@ router.post("/community", authMiddleware, async (req, res) => {
 });
 
 // Get all enabled facilities for booking purposes
-router.get("/community/facilities", authMiddleware, async (req, res) => {
+router.get("/community/facilities", async (req, res) => {
   try {
     // Get the user's community ID from the authenticated user
     const user = await prisma.user.findUnique({
@@ -521,8 +530,37 @@ router.get("/community/facilities", authMiddleware, async (req, res) => {
   }
 });
 
+// Helper function to create actual facilities from configuration
+async function createFacilitiesFromConfig(facilityConfig, communityId) {
+  const facilitiesToCreate = [];
+  const operatingHours = facilityConfig.operatingHours || "09:00-21:00";
+  const [openTime, closeTime] = operatingHours.split("-");
+
+  for (let i = 1; i <= facilityConfig.quantity; i++) {
+    facilitiesToCreate.push({
+      name: `${facilityConfig.facilityType
+        .replace(/_/g, " ")
+        .toLowerCase()
+        .replace(/\b\w/g, (l) => l.toUpperCase())} ${i}`,
+      facilityType: facilityConfig.facilityType,
+      open: openTime?.trim() || "09:00",
+      close: closeTime?.trim() || "21:00",
+      slotMins: 60, // Default slot duration
+      capacity: facilityConfig.maxCapacity,
+      communityId: communityId,
+      configurationId: facilityConfig.id,
+    });
+  }
+
+  if (facilitiesToCreate.length > 0) {
+    await prisma.facility.createMany({
+      data: facilitiesToCreate,
+    });
+  }
+}
+
 // Save facility configurations
-router.post("/community/facilities", authMiddleware, async (req, res) => {
+router.post("/community/facilities", async (req, res) => {
   try {
     const { facilities } = req.body;
 
@@ -545,32 +583,69 @@ router.post("/community/facilities", authMiddleware, async (req, res) => {
       return res.status(404).json({ error: "Community not found" });
     }
 
-    // Delete existing facility configurations
-    await prisma.facilityConfiguration.deleteMany({
-      where: { communityId: community.id },
-    });
-
-    // Create new facility configurations
-    if (facilities && Array.isArray(facilities) && facilities.length > 0) {
-      const facilityData = facilities.map((facility) => ({
-        facilityType: facility.facilityType.toUpperCase(),
-        enabled: facility.enabled || false,
-        quantity: facility.quantity || 1,
-        maxCapacity: facility.maxCapacity || 10,
-        isPaid: facility.isPaid || false,
-        price: facility.isPaid ? facility.price || 0 : 0,
-        priceType: facility.isPaid
-          ? facility.priceType?.toUpperCase() || "PER_HOUR"
-          : null,
-        operatingHours: facility.operatingHours || "09:00-21:00",
-        rules: facility.rules?.trim() || null,
-        communityId: community.id,
-      }));
-
-      await prisma.facilityConfiguration.createMany({
-        data: facilityData,
+    // Begin transaction to ensure consistency
+    await prisma.$transaction(async (tx) => {
+      // Delete existing facilities and configurations
+      await tx.facility.deleteMany({
+        where: { communityId: community.id },
       });
-    }
+
+      await tx.facilityConfiguration.deleteMany({
+        where: { communityId: community.id },
+      });
+
+      // Create new facility configurations and actual facilities
+      if (facilities && Array.isArray(facilities) && facilities.length > 0) {
+        for (const facility of facilities) {
+          // Create facility configuration
+          const facilityConfig = await tx.facilityConfiguration.create({
+            data: {
+              facilityType: facility.facilityType.toUpperCase(),
+              enabled: facility.enabled || false,
+              quantity: facility.quantity || 1,
+              maxCapacity: facility.maxCapacity || 10,
+              isPaid: facility.isPaid || false,
+              price: facility.isPaid ? facility.price || 0 : 0,
+              priceType: facility.isPaid
+                ? facility.priceType?.toUpperCase() || "PER_HOUR"
+                : null,
+              operatingHours: facility.operatingHours || "09:00-21:00",
+              rules: facility.rules?.trim() || null,
+              communityId: community.id,
+            },
+          });
+
+          // If enabled, create actual facility records
+          if (facility.enabled) {
+            const operatingHours = facility.operatingHours || "09:00-21:00";
+            const [openTime, closeTime] = operatingHours.split("-");
+
+            const facilitiesToCreate = [];
+            for (let i = 1; i <= (facility.quantity || 1); i++) {
+              facilitiesToCreate.push({
+                name: `${facility.facilityType
+                  .replace(/_/g, " ")
+                  .toLowerCase()
+                  .replace(/\b\w/g, (l) => l.toUpperCase())} ${i}`,
+                facilityType: facility.facilityType.toUpperCase(),
+                open: openTime?.trim() || "09:00",
+                close: closeTime?.trim() || "21:00",
+                slotMins: 60, // Default slot duration
+                capacity: facility.maxCapacity || 10,
+                communityId: community.id,
+                configurationId: facilityConfig.id,
+              });
+            }
+
+            if (facilitiesToCreate.length > 0) {
+              await tx.facility.createMany({
+                data: facilitiesToCreate,
+              });
+            }
+          }
+        }
+      }
+    });
 
     res.status(200).json({ message: "Facilities saved successfully" });
   } catch (error) {
@@ -602,6 +677,9 @@ router.get(
         include: {
           facilityConfigs: {
             where: { enabled: true },
+            include: {
+              facilities: true,
+            },
           },
         },
       });
@@ -613,44 +691,22 @@ router.get(
         });
       }
 
-      // Convert facility types to string and create actual facility records if they don't exist
+      // Get enabled facilities with their configurations
       const enabledFacilities = [];
 
       for (const facilityConfig of community.facilityConfigs) {
-        // Check if actual facilities exist for this configuration
-        let existingFacilities = await prisma.facility.findMany({
-          where: {
-            facilityType: facilityConfig.facilityType,
-            configurationId: facilityConfig.id,
-          },
-        });
+        // If no actual facilities exist for this config, create them
+        let existingFacilities = facilityConfig.facilities;
 
-        // If no facilities exist, create them based on quantity
         if (existingFacilities.length === 0) {
-          const facilitiesToCreate = [];
-          for (let i = 1; i <= facilityConfig.quantity; i++) {
-            facilitiesToCreate.push({
-              name: `${facilityConfig.facilityType
-                .replace("_", " ")
-                .toLowerCase()
-                .replace(/\b\w/g, (l) => l.toUpperCase())} ${i}`,
-              facilityType: facilityConfig.facilityType,
-              open: facilityConfig.operatingHours.split("-")[0] || "09:00",
-              close: facilityConfig.operatingHours.split("-")[1] || "21:00",
-              slotMins: 60, // Default slot duration
-              configurationId: facilityConfig.id,
-            });
-          }
-
-          await prisma.facility.createMany({
-            data: facilitiesToCreate,
-          });
+          // Create facilities on-demand (fallback for old data)
+          await createFacilitiesFromConfig(facilityConfig, user.communityId);
 
           // Fetch the newly created facilities
           existingFacilities = await prisma.facility.findMany({
             where: {
-              facilityType: facilityConfig.facilityType,
               configurationId: facilityConfig.id,
+              communityId: user.communityId,
             },
           });
         }
@@ -826,7 +882,7 @@ router.patch(
 );
 
 // Delete community configuration
-router.delete("/community", authMiddleware, async (req, res) => {
+router.delete("/community", async (req, res) => {
   try {
     const { communityId } = req.query;
     const community = await prisma.community.findUnique({
@@ -869,7 +925,7 @@ router.delete("/community", authMiddleware, async (req, res) => {
 });
 
 // Get facility types enum for frontend
-router.get("/community/facility-types", authMiddleware, async (req, res) => {
+router.get("/community/facility-types", async (req, res) => {
   try {
     const facilityTypes = Object.values(FacilityType).map((type) => ({
       id: type.toLowerCase(),
@@ -903,6 +959,18 @@ router.get("/community/facility-types", authMiddleware, async (req, res) => {
       message: "Failed to fetch facility types",
       error: error.message,
     });
+  }
+});
+
+router.delete("/bookings/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    await prisma.booking.delete({ where: { id } });
+    broadcastEvent("booking", { action: "deleted", bookingId: id });
+    res.json({ message: "Booking deleted" });
+  } catch (err) {
+    console.error("Error deleting booking:", err);
+    res.status(500).json({ error: "Failed to delete booking" });
   }
 });
 
