@@ -17,9 +17,41 @@ const transporter = nodemailer.createTransport({
 const otps = {};
 
 router.post("/login", async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, "g-recaptcha-response": recaptchaToken } = req.body;
 
   try {
+    // Verify reCAPTCHA if token is provided
+    if (recaptchaToken) {
+      try {
+        console.log("Verifying reCAPTCHA token for login...");
+        const verifyUrl = "https://www.google.com/recaptcha/api/siteverify";
+        const verifyResponse = await axios.post(
+          verifyUrl,
+          new URLSearchParams({
+            secret: process.env.RECAPTCHA_SECRET_KEY,
+            response: recaptchaToken,
+          })
+        );
+
+        console.log("reCAPTCHA verification result:", verifyResponse.data);
+
+        if (!verifyResponse.data.success) {
+          console.log(
+            "reCAPTCHA verification failed:",
+            verifyResponse.data["error-codes"]
+          );
+          return res.status(400).json({
+            error: "reCAPTCHA verification failed. Please try again.",
+          });
+        }
+      } catch (error) {
+        console.error("reCAPTCHA verification error:", error.message);
+        return res.status(500).json({
+          error: "Failed to verify reCAPTCHA. Please try again.",
+        });
+      }
+    }
+
     const user = await prisma.user.findUnique({
       where: { email, password },
       select: {
@@ -29,6 +61,16 @@ router.post("/login", async (req, res) => {
         role: true,
         status: true,
         communityId: true,
+        unit: {
+          select: {
+            number: true,
+            block: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -47,7 +89,12 @@ router.post("/login", async (req, res) => {
 
     const jwttoken = jwt.sign({ userId: user.id }, process.env.JWT_SECRET);
 
-    const data = { ...user, communityName: community?.name };
+    const data = {
+      ...user,
+      communityName: community?.name,
+      unitNumber: user.unit?.number,
+      blockName: user.unit?.block?.name,
+    };
 
     return res.status(200).json({ user: data, jwttoken });
   } catch (e) {
@@ -57,6 +104,14 @@ router.post("/login", async (req, res) => {
 });
 
 router.post("/community-signup", async (req, res) => {
+  console.log("Community signup request received:", {
+    ...req.body,
+    password: "[HIDDEN]",
+    "g-recaptcha-response": req.body["g-recaptcha-response"]
+      ? "[TOKEN_PRESENT]"
+      : "[TOKEN_MISSING]",
+  });
+
   const {
     name,
     email,
@@ -65,11 +120,57 @@ router.post("/community-signup", async (req, res) => {
     address,
     "g-recaptcha-response": recaptchaToken,
   } = req.body;
+
+  // Validate required fields
+  if (!name || !email || !password || !communityName) {
+    console.log("Missing required fields:", {
+      name: !!name,
+      email: !!email,
+      password: !!password,
+      communityName: !!communityName,
+    });
+    return res
+      .status(400)
+      .json({ error: "All required fields must be filled" });
+  }
+
   if (!recaptchaToken) {
+    console.log("reCAPTCHA token missing");
     return res
       .status(400)
       .json({ error: "Please complete the reCAPTCHA test" });
   }
+
+  // Verify reCAPTCHA with Google
+  try {
+    console.log("Verifying reCAPTCHA token...");
+    const verifyUrl = "https://www.google.com/recaptcha/api/siteverify";
+    const verifyResponse = await axios.post(
+      verifyUrl,
+      new URLSearchParams({
+        secret: process.env.RECAPTCHA_SECRET_KEY,
+        response: recaptchaToken,
+      })
+    );
+
+    console.log("reCAPTCHA verification result:", verifyResponse.data);
+
+    if (!verifyResponse.data.success) {
+      console.log(
+        "reCAPTCHA verification failed:",
+        verifyResponse.data["error-codes"]
+      );
+      return res.status(400).json({
+        error: "reCAPTCHA verification failed. Please try again.",
+      });
+    }
+  } catch (error) {
+    console.error("reCAPTCHA verification error:", error.message);
+    return res.status(500).json({
+      error: "Failed to verify reCAPTCHA. Please try again.",
+    });
+  }
+
   try {
     const existingAdmin = await prisma.user.findUnique({
       where: { email },
@@ -114,13 +215,51 @@ router.post("/community-signup", async (req, res) => {
 });
 
 router.post("/signup", async (req, res) => {
-  const { name, email, password, communityId } = req.body;
+  const {
+    name,
+    email,
+    password,
+    communityId,
+    blockId,
+    unitId,
+    "g-recaptcha-response": recaptchaToken,
+  } = req.body;
 
   try {
     if (!communityId) {
       return res.status(400).json({
         error: "Community selection is required.",
       });
+    }
+
+    // Verify reCAPTCHA if token is provided
+    if (recaptchaToken) {
+      try {
+        console.log("Verifying reCAPTCHA token for signup...");
+        const verifyUrl = "https://www.google.com/recaptcha/api/siteverify";
+        const verifyResponse = await axios.post(
+          verifyUrl,
+          new URLSearchParams({
+            secret: process.env.RECAPTCHA_SECRET_KEY,
+            response: recaptchaToken,
+          })
+        );
+
+        if (!verifyResponse.data.success) {
+          console.log(
+            "reCAPTCHA verification failed:",
+            verifyResponse.data["error-codes"]
+          );
+          return res.status(400).json({
+            error: "reCAPTCHA verification failed. Please try again.",
+          });
+        }
+      } catch (error) {
+        console.error("reCAPTCHA verification error:", error.message);
+        return res.status(500).json({
+          error: "Failed to verify reCAPTCHA. Please try again.",
+        });
+      }
     }
 
     const community = await prisma.community.findUnique({
@@ -133,6 +272,38 @@ router.post("/signup", async (req, res) => {
       });
     }
 
+    // Validate block and unit if provided
+    if (blockId) {
+      const block = await prisma.block.findFirst({
+        where: {
+          id: blockId,
+          communityId: communityId,
+        },
+      });
+
+      if (!block) {
+        return res.status(400).json({
+          error: "Selected block not found in this community.",
+        });
+      }
+    }
+
+    if (unitId) {
+      const unit = await prisma.unit.findFirst({
+        where: {
+          id: unitId,
+          communityId: communityId,
+          ...(blockId && { blockId: blockId }),
+        },
+      });
+
+      if (!unit) {
+        return res.status(400).json({
+          error: "Selected unit not found in this community/block.",
+        });
+      }
+    }
+
     const user = await prisma.user.create({
       data: {
         name,
@@ -141,6 +312,7 @@ router.post("/signup", async (req, res) => {
         role: "RESIDENT",
         status: "PENDING",
         communityId: community.id,
+        unitId: unitId,
       },
       select: {
         id: true,
@@ -149,6 +321,16 @@ router.post("/signup", async (req, res) => {
         role: true,
         status: true,
         communityId: true,
+        unit: {
+          select: {
+            number: true,
+            block: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        }
       },
     });
 
@@ -175,6 +357,16 @@ router.get("/existing-user", async (req, res) => {
         role: true,
         status: true,
         communityId: true,
+        unit: {
+          select: {
+            number: true,
+            block: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        }
       },
     });
 
@@ -187,7 +379,12 @@ router.get("/existing-user", async (req, res) => {
         { userId: existingUser.id },
         process.env.JWT_SECRET
       );
-      const data = { ...existingUser, communityName: community?.name };
+      const data = {
+        ...existingUser,
+        communityName: community?.name,
+        unitNumber: existingUser.unit?.number,
+        blockName: existingUser.unit?.block?.name,
+      };
       return res.status(200).json({ exists: true, user: data, jwttoken });
     }
     return res.status(200).json({ exists: false });
@@ -264,6 +461,24 @@ router.get("/communities", async (req, res) => {
         id: true,
         name: true,
         address: true,
+        blocks: {
+          select: {
+            id: true,
+            name: true,
+            units: {
+              select: {
+                id: true,
+                number: true,
+              },
+              orderBy: {
+                number: "asc",
+              },
+            },
+          },
+          orderBy: {
+            name: "asc",
+          },
+        },
       },
       orderBy: {
         name: "asc",
@@ -279,6 +494,120 @@ router.get("/communities", async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to fetch communities",
+      error: error.message,
+    });
+  }
+});
+
+// Get blocks for a specific community
+router.get("/communities/:communityId/blocks", async (req, res) => {
+  const { communityId } = req.params;
+
+  try {
+    const blocks = await prisma.block.findMany({
+      where: {
+        communityId: communityId,
+      },
+      select: {
+        id: true,
+        name: true,
+        communityId: true,
+      },
+      orderBy: {
+        name: "asc",
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      data: blocks,
+    });
+  } catch (error) {
+    console.error("Error fetching blocks:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch blocks",
+      error: error.message,
+    });
+  }
+});
+
+// Get units for a specific block
+router.get("/blocks/:blockId/units", async (req, res) => {
+  const { blockId } = req.params;
+
+  try {
+    const units = await prisma.unit.findMany({
+      where: {
+        blockId: blockId,
+      },
+      select: {
+        id: true,
+        number: true,
+        blockId: true,
+        communityId: true,
+      },
+      orderBy: {
+        number: "asc",
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      data: units,
+    });
+  } catch (error) {
+    console.error("Error fetching units:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch units",
+      error: error.message,
+    });
+  }
+});
+
+// Get units for a specific community (all units across all blocks)
+router.get("/communities/:communityId/units", async (req, res) => {
+  const { communityId } = req.params;
+
+  try {
+    const units = await prisma.unit.findMany({
+      where: {
+        communityId: communityId,
+      },
+      select: {
+        id: true,
+        number: true,
+        blockId: true,
+        communityId: true,
+        block: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+      orderBy: [
+        {
+          block: {
+            name: "asc",
+          },
+        },
+        {
+          number: "asc",
+        },
+      ],
+    });
+
+    res.status(200).json({
+      success: true,
+      data: units,
+    });
+  } catch (error) {
+    console.error("Error fetching units:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch units",
       error: error.message,
     });
   }

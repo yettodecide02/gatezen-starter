@@ -1,11 +1,19 @@
 import express from "express";
-import { v4 as uuid } from "uuid";
 import qrcode from "qrcode";
 import nodemailer from "nodemailer";
 import prisma from "../../../lib/prisma.js";
 import { authMiddleware } from "../../middleware/auth.js";
 
 const router = express.Router();
+router.use(authMiddleware);
+router.use(checkAuth);
+
+function checkAuth(req, res, next) {
+  if (req.user.role !== "RESIDENT") {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  next();
+}
 
 // Use global broadcastEvent function
 const broadcastEvent = global.broadcastEvent || (() => {});
@@ -18,9 +26,13 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-const visitors = [];
+// Helper function to check if booking aligns to slot
+function isAlignedToSlot(start, end, slotMins) {
+  const durationMins = (end.getTime() - start.getTime()) / 60000;
+  return durationMins === slotMins;
+}
 
-router.get("/dashboard", authMiddleware, async (req, res) => {
+router.get("/dashboard", async (req, res) => {
   const { userId, communityId } = req.query;
   if (!userId || !communityId) {
     return res
@@ -29,7 +41,7 @@ router.get("/dashboard", authMiddleware, async (req, res) => {
   }
   try {
     // Get community announcements (not user-specific)
-    const announcements = await prisma.announcements.findMany({
+    const announcements = await prisma.announcement.findMany({
       where: { communityId: communityId },
       select: { id: true, title: true, content: true, createdAt: true },
       orderBy: { createdAt: "desc" },
@@ -41,7 +53,7 @@ router.get("/dashboard", authMiddleware, async (req, res) => {
       select: { id: true, title: true, description: true, status: true },
     });
 
-    const payments = await prisma.payments.findMany({
+    const payments = await prisma.payment.findMany({
       where: { userId: userId, communityId: communityId },
       select: { id: true, amount: true, status: true },
     });
@@ -70,15 +82,26 @@ router.get("/dashboard", authMiddleware, async (req, res) => {
 });
 
 // Maintenance routes for residents
-router.get("/maintenance", authMiddleware, async (req, res) => {
+router.get("/maintenance", async (req, res) => {
   try {
     const { userId, communityId } = req.query;
     const tickets = await prisma.ticket.findMany({
       where: { userId, communityId },
       include: {
-        comments: { include: { user: true } },
-        images: true,
-        history: true,
+        comments: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                role: true,
+              },
+            },
+          },
+        },
+        history: {
+          orderBy: { changedAt: "desc" },
+        },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -89,10 +112,9 @@ router.get("/maintenance", authMiddleware, async (req, res) => {
   }
 });
 
-router.post("/maintenance", authMiddleware, async (req, res) => {
+router.post("/maintenance", async (req, res) => {
   try {
-    const { userId, title, category, description, images, communityId } =
-      req.body;
+    const { userId, title, category, description, communityId } = req.body;
 
     if (!userId || !title || !category || !communityId) {
       return res.status(400).json({
@@ -108,14 +130,29 @@ router.post("/maintenance", authMiddleware, async (req, res) => {
         userId,
         communityId,
         status: "SUBMITTED",
-        images: {
-          create: (images || []).map((url) => ({ url })),
-        },
+        priority: "LOW", // Default priority
         history: {
-          create: { status: "SUBMITTED", note: "Ticket created" },
+          create: {
+            status: "SUBMITTED",
+          },
         },
       },
-      include: { comments: true, images: true, history: true },
+      include: {
+        comments: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                role: true,
+              },
+            },
+          },
+        },
+        history: {
+          orderBy: { changedAt: "desc" },
+        },
+      },
     });
 
     broadcastEvent("maintenance", { action: "created", ticket });
@@ -126,14 +163,22 @@ router.post("/maintenance", authMiddleware, async (req, res) => {
   }
 });
 
-router.post("/maintenance/:id/comments", authMiddleware, async (req, res) => {
+router.post("/maintenance/:id/comments", async (req, res) => {
   try {
     const { id } = req.params;
     const { userId, name, text } = req.body;
 
     const comment = await prisma.comment.create({
       data: { text, userId, ticketId: id },
-      include: { user: true },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            role: true,
+          },
+        },
+      },
     });
 
     broadcastEvent("maintenance", { action: "comment", ticketId: id, comment });
@@ -151,156 +196,181 @@ router.post("/maintenance/:id/comments", authMiddleware, async (req, res) => {
   }
 });
 
-// PATCH /maintenance/:id/status
-router.patch("/maintenance/:id/status", authMiddleware, async (req, res) => {
-  try {
-    const { id } = req.params;
-    let { status, communityId } = req.body;
-
-    // Map frontend status to Prisma enum
-    if (status === "in_progress") status = "IN_PROGRESS";
-    if (status === "resolved") status = "RESOLVED";
-    if (status === "submitted") status = "SUBMITTED";
-
-    const ticket = await prisma.ticket.update({
-      where: { id, communityId },
-      data: {
-        status,
-        history: {
-          create: { status, note: `Status changed to ${status}` },
-        },
-      },
-      include: { comments: true, images: true, history: true },
-    });
-
-    broadcastEvent("maintenance", { action: "status", ticketId: id, status });
-    res.json(ticket);
-  } catch (err) {
-    console.error("Error changing ticket status:", err);
-    res.status(500).json({ error: "Failed to change status" });
-  }
-});
-
-// POST /maintenance/:id/images
-router.post("/maintenance/:id/images", authMiddleware, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { imageUrl } = req.body;
-
-    await prisma.image.create({
-      data: { url: imageUrl, ticketId: id },
-    });
-
-    broadcastEvent("maintenance", { action: "image", ticketId: id });
-    res.json({ message: "Image attached" });
-  } catch (err) {
-    console.error("Error attaching image:", err);
-    res.status(500).json({ error: "Failed to attach image" });
-  }
-});
-
 // Get visitors for a resident
-router.get("/visitors", authMiddleware, async (req, res) => {
+router.get("/visitors", async (req, res) => {
   try {
-    const { status, from, to, communityId } = req.query;
+    const { from, to, communityId, userId } = req.query;
 
     if (!communityId) {
       return res.status(400).json({ error: "communityId is required" });
     }
 
-    let filteredVisitors = visitors.filter(
-      (v) => v.communityId === communityId
-    );
+    // Build where clause
+    const whereClause = {
+      communityId: String(communityId),
+    };
 
-    if (status) {
-      filteredVisitors = filteredVisitors.filter((v) => v.status === status);
+    // If userId is provided, filter by resident (for resident's own visitors)
+    if (userId) {
+      whereClause.userId = String(userId);
     }
 
+    // Date range filtering
+    whereClause.visitDate = {};
     if (from) {
       const fromDate = new Date(from);
-      filteredVisitors = filteredVisitors.filter(
-        (v) => new Date(v.expectedAt || v.createdAt) >= fromDate
-      );
+      fromDate.setUTCHours(0, 0, 0, 0); // Start of the day
+      whereClause.visitDate.gte = fromDate;
     }
 
     if (to) {
       const toDate = new Date(to);
-      filteredVisitors = filteredVisitors.filter(
-        (v) => new Date(v.expectedAt || v.createdAt) <= toDate
-      );
+      toDate.setUTCHours(23, 59, 59, 999); // End of the day
+      whereClause.visitDate.lte = toDate;
     }
 
-    res.status(200).json(filteredVisitors);
+    const visitors = await prisma.visitor.findMany({
+      where: whereClause,
+      include: {
+        user: {
+          select: {
+            name: true,
+            id: true,
+            unit: {
+              select: {
+                id: true,
+                number: true,
+                block: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        visitDate: "desc",
+      },
+    });
+    // Transform data to match frontend expectations
+    const transformedVisitors = visitors.map((visitor) => ({
+      ...visitor,
+      hostName: visitor.user?.name || "Unknown",
+      unitNumber: visitor.user?.unit?.number || "N/A",
+      blockName: visitor.user?.unit?.block?.name || "N/A",
+      status: visitor.checkOutAt
+        ? "checked_out"
+        : visitor.checkInAt
+        ? "checked_in"
+        : "pending",
+    }));
+
+    res.status(200).json(transformedVisitors);
   } catch (e) {
     console.error("Error fetching visitors:", e);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Update visitor status
-router.patch("/visitors/:id/status", authMiddleware, async (req, res) => {
+router.post("/visitor-creation", async (req, res) => {
   try {
-    const { id } = req.params;
-    const { status, note, communityId } = req.body;
 
-    if (!communityId) {
-      return res.status(400).json({ error: "communityId is required" });
-    }
+    const {
+      name,
+      contact,
+      visitorType,
+      visitDate,
+      purpose,
+      vehicleNo,
+      notes,
+      communityId,
+      userId,
+    } = req.body || {};
 
-    const visitorIndex = visitors.findIndex(
-      (v) => v.id === id && v.communityId === communityId
-    );
-    if (visitorIndex === -1) {
-      return res.status(404).json({ error: "Visitor not found" });
-    }
+    // Use authenticated user's ID as userId if not provided
+    const actualUserId = userId || req.user?.id;
 
-    visitors[visitorIndex] = {
-      ...visitors[visitorIndex],
-      status,
-      note,
-      updatedAt: new Date().toISOString(),
-    };
 
-    res.status(200).json(visitors[visitorIndex]);
-  } catch (e) {
-    console.error("Error updating visitor status:", e);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-router.post("/visitor-creation", authMiddleware, async (req, res) => {
-  try {
-    const { name, email, expectedAt, purpose, vehicle, notes, communityId } =
-      req.body || {};
-    if (!name || !email || !communityId) {
+    if (!name || !contact || !communityId || !actualUserId) {
       return res.status(400).json({
-        error: "Missing required fields: name, email, and communityId",
+        error:
+          "Missing required fields: name, contact, communityId, and userId",
       });
     }
 
-    const id = uuid();
-    const newVisitor = { id, name, email, communityId };
+    const validTypes = ["GUEST", "DELIVERY", "CAB_AUTO"];
+    const actualVisitorType =
+      visitorType && validTypes.includes(visitorType.toUpperCase())
+        ? visitorType.toUpperCase()
+        : "GUEST";
 
-    visitors.push(newVisitor);
-
-    const qrPngBuffer = await qrcode.toBuffer(
-      "http://192.168.0.103:4000/scan?id=" + id,
-      {
-        type: "png",
-        width: 300,
-        margin: 2,
-        errorCorrectionLevel: "M",
+    // For GUEST visitors, contact should be an email
+    if (actualVisitorType === "GUEST") {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(contact)) {
+        return res.status(400).json({
+          error:
+            "Valid email is required in contact field for GUEST visitor type",
+        });
       }
-    );
+    }
 
-    const qrCid = `qr-${id}@gatezen`;
+    const visitorData = {
+      name,
+      contact,
+      vehicleNo,
+      visitorType: actualVisitorType,
+      visitDate: visitDate ? new Date(visitDate) : new Date(),
+      communityId: String(communityId),
+      userId: String(actualUserId),
+    };
 
-    const subject = `Your GateZen visitor pass (QR) — ${name}`;
-    await transporter.sendMail({
-      from: process.env.EMAIL_ID,
-      to: email,
-      subject,
-      text: `Hi ${name},\n\nPlease scan this QR code at the entrance to check in:`,
-      html: `
+    const visitor = await prisma.visitor.create({
+      data: visitorData,
+      select: {
+        id: true,
+        name: true,
+        contact: true,
+        vehicleNo: true,
+        visitorType: true,
+        visitDate: true,
+        checkInAt: true,
+        checkOutAt: true,
+        communityId: true,
+        userId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    if (!visitor) {
+      throw new Error("Visitor creation failed");
+    }
+
+    // Send QR code email for GUEST visitors
+    if (visitor.visitorType === "GUEST") {
+      const qrPngBuffer = await qrcode.toBuffer(
+        `${process.env.BACKEND_URL}/gatekeeper/scan?id=${visitor.id}&communityId=${visitor.communityId}`,
+        {
+          type: "png",
+          width: 300,
+          margin: 2,
+          errorCorrectionLevel: "M",
+        }
+      );
+
+      const qrCid = `qr-${visitor.id}@gatezen`;
+
+      const subject = `Your GateZen visitor pass (QR) — ${name}`;
+      await transporter.sendMail({
+        from: process.env.EMAIL_ID,
+        to: contact, // contact field contains email for GUEST type
+        subject,
+        text: `Hi ${name},\n\nPlease scan this QR code at the entrance to check in:`,
+        html: `
         <div style="font-family: Arial, sans-serif; line-height: 1.5; color: #111;">
           <h2 style="margin: 0 0 12px;">Hi ${name},</h2>
           <p style="margin: 0 0 12px;">Your visitor pass is ready. Show this QR at the gate:</p>
@@ -308,18 +378,19 @@ router.post("/visitor-creation", authMiddleware, async (req, res) => {
           <p style="margin: 0;">Thanks,<br/>GateZen</p>
         </div>
       `,
-      attachments: [
-        {
-          filename: "visitor-qr.png",
-          content: qrPngBuffer,
-          contentType: "image/png",
-          cid: qrCid,
-        },
-      ],
-    });
+        attachments: [
+          {
+            filename: "visitor-qr.png",
+            content: qrPngBuffer,
+            contentType: "image/png",
+            cid: qrCid,
+          },
+        ],
+      });
+    }
 
     return res.status(201).json({
-      visitor: newVisitor,
+      visitor: visitor,
       message: "Visitor created and QR email dispatched",
     });
   } catch (err) {
@@ -330,32 +401,40 @@ router.post("/visitor-creation", authMiddleware, async (req, res) => {
   }
 });
 
-router.get("/scan", (req, res) => {
-  const { id, communityId } = req.query;
-
-  if (!id || !communityId) {
-    return res.status(400).json({ error: "Missing visitor ID or communityId" });
-  }
-
-  const visitor = visitors.find(
-    (v) => v.id === id && v.communityId === communityId
-  );
-
-  if (!visitor) {
-    return res.status(404).json({ error: "Visitor not found" });
-  }
-
-  return res.status(200).json({ visitor });
-});
-
-router.get("/facilities", authMiddleware, async (req, res) => {
+router.get("/facilities", async (req, res) => {
   try {
     const { communityId } = req.query;
 
     const community = await prisma.community.findUnique({
       where: { id: communityId },
       select: {
-        facilityConfigs: true,
+        facilityConfigs: {
+          where: { enabled: true }, // Only return enabled facilities
+          select: {
+            id: true,
+            facilityType: true,
+            enabled: true,
+            quantity: true,
+            maxCapacity: true,
+            isPaid: true,
+            price: true,
+            priceType: true,
+            operatingHours: true,
+            rules: true,
+            createdAt: true,
+            updatedAt: true,
+            facilities: {
+              select: {
+                id: true,
+                name: true,
+                open: true,
+                close: true,
+                slotMins: true,
+                capacity: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -366,12 +445,44 @@ router.get("/facilities", authMiddleware, async (req, res) => {
       });
     }
 
-    // Get actual facilities that are linked to enabled configurations
-    const enabledFacilities = community.facilityConfigs;
+    // Transform the data to provide both configuration and facility information
+    const transformedFacilities = community.facilityConfigs.map((config) => {
+      // If there's an actual facility, use its details, otherwise use config defaults
+      const facility = config.facilities[0]; // Assuming one facility per config for now
+
+      return {
+        // Use configuration ID for booking (our endpoint handles the mapping)
+        id: config.id,
+        facilityType: config.facilityType,
+        name: facility?.name || config.facilityType.replace(/_/g, " "),
+        enabled: config.enabled,
+        quantity: config.quantity,
+        maxCapacity: config.maxCapacity,
+        capacity: facility?.capacity || config.maxCapacity, // Use actual facility capacity if available
+        isPaid: config.isPaid,
+        price: config.price,
+        priceType: config.priceType,
+        operatingHours: config.operatingHours,
+        rules: config.rules,
+        // Provide slotMins - use actual facility value or default to 60
+        slotMins: facility?.slotMins || 60,
+        // Parse operating hours "09:00-21:00" into separate open/close times for frontend
+        ...(config.operatingHours && {
+          open: config.operatingHours.split("-")[0]?.trim(),
+          close: config.operatingHours.split("-")[1]?.trim(),
+        }),
+        // If there's an actual facility, include its specific details
+        ...(facility && {
+          actualFacilityId: facility.id,
+        }),
+        createdAt: config.createdAt,
+        updatedAt: config.updatedAt,
+      };
+    });
 
     res.status(200).json({
       success: true,
-      data: enabledFacilities,
+      data: transformedFacilities,
     });
   } catch (error) {
     console.error("Error fetching available facilities:", error);
@@ -383,440 +494,685 @@ router.get("/facilities", authMiddleware, async (req, res) => {
   }
 });
 
-// Get bookings for a resident
-router.get("/bookings", authMiddleware, async (req, res) => {
+function toHM(date) {
+  // returns "HH:mm" in local time
+  const d = new Date(date);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function overlaps(aStart, aEnd, bStart, bEnd) {
+  return aStart < bEnd && bStart < aEnd;
+}
+
+// GET /bookings?facilityId=&date=YYYY-MM-DD
+router.get("/bookings", async (req, res) => {
   try {
-    const userId = req.user.id;
-    const { status, from, to, communityId } = req.query;
+    const { facilityId, date } = req.query;
+    if (!facilityId || !date) {
+      return res
+        .status(400)
+        .json({ error: "facilityId and date are required" });
+    }
 
-    if (!communityId) {
-      return res.status(400).json({
-        success: false,
-        message: "communityId is required",
+    const dayStart = new Date(`${date}T00:00:00.000Z`);
+    const dayEnd = new Date(dayStart.getTime() + 24 * 3600e3);
+
+    // Determine if this is a configuration ID or actual facility ID
+    let actualFacilityIds = [];
+
+    const facilityConfig = await prisma.facilityConfiguration.findUnique({
+      where: { id: facilityId },
+      include: { facilities: { select: { id: true } } },
+    });
+
+    if (facilityConfig) {
+      // This is a configuration ID, get all linked facility IDs
+      actualFacilityIds = facilityConfig.facilities.map((f) => f.id);
+    } else {
+      // Check if it's already a facility ID
+      const facility = await prisma.facility.findUnique({
+        where: { id: facilityId },
+        select: { id: true },
       });
-    }
-
-    let whereCondition = { userId, communityId };
-
-    if (status) {
-      whereCondition.status = status.toUpperCase();
-    }
-
-    if (from || to) {
-      whereCondition.startsAt = {};
-      if (from) {
-        whereCondition.startsAt.gte = new Date(from);
-      }
-      if (to) {
-        whereCondition.startsAt.lte = new Date(to);
+      if (facility) {
+        actualFacilityIds = [facility.id];
       }
     }
 
-    const bookings = await prisma.booking.findMany({
-      where: whereCondition,
-      include: {
-        facility: {
-          include: {
-            configuration: true,
-          },
-        },
-      },
-      orderBy: { startsAt: "desc" },
-    });
-
-    // Format response for frontend
-    const formattedBookings = bookings.map((booking) => ({
-      ...booking,
-      facility: {
-        ...booking.facility,
-        facilityType: booking.facility.facilityType.toLowerCase(),
-        configuration: booking.facility.configuration
-          ? {
-              ...booking.facility.configuration,
-              facilityType:
-                booking.facility.configuration.facilityType.toLowerCase(),
-              priceType:
-                booking.facility.configuration.priceType?.toLowerCase(),
-            }
-          : null,
-      },
-    }));
-
-    res.status(200).json({
-      success: true,
-      data: formattedBookings,
-    });
-  } catch (error) {
-    console.error("Error fetching bookings:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch bookings",
-      error: error.message,
-    });
-  }
-});
-
-// Create a new booking (only for enabled facilities)
-router.post("/bookings", authMiddleware, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const { facilityId, startsAt, endsAt, note, communityId } = req.body;
-
-    // Validate required fields
-    if (!facilityId || !startsAt || !endsAt || !communityId) {
-      return res.status(400).json({
-        success: false,
-        message: "facilityId, startsAt, endsAt, and communityId are required",
-      });
+    if (actualFacilityIds.length === 0) {
+      return res
+        .status(404)
+        .json({ error: "No facilities found for the given ID" });
     }
 
-    // Check if facility exists and is enabled
-    const facility = await prisma.facility.findFirst({
+    const list = await prisma.booking.findMany({
       where: {
-        id: facilityId,
-        communityId: communityId,
-      },
-      include: {
-        configuration: true,
-      },
-    });
-
-    if (!facility) {
-      return res.status(404).json({
-        success: false,
-        message: "Facility not found",
-      });
-    }
-
-    if (!facility.configuration || !facility.configuration.enabled) {
-      return res.status(400).json({
-        success: false,
-        message: "This facility is not available for booking",
-      });
-    }
-
-    const startTime = new Date(startsAt);
-    const endTime = new Date(endsAt);
-
-    // Validate booking times
-    if (startTime >= endTime) {
-      return res.status(400).json({
-        success: false,
-        message: "Start time must be before end time",
-      });
-    }
-
-    if (startTime < new Date()) {
-      return res.status(400).json({
-        success: false,
-        message: "Cannot book in the past",
-      });
-    }
-
-    // Check for conflicts
-    const conflictingBookings = await prisma.booking.findMany({
-      where: {
-        facilityId,
-        communityId,
-        status: "CONFIRMED",
-        OR: [
-          {
-            AND: [
-              { startsAt: { lte: startTime } },
-              { endsAt: { gt: startTime } },
-            ],
-          },
-          {
-            AND: [{ startsAt: { lt: endTime } }, { endsAt: { gte: endTime } }],
-          },
-          {
-            AND: [
-              { startsAt: { gte: startTime } },
-              { endsAt: { lte: endTime } },
-            ],
-          },
-        ],
-      },
-    });
-
-    if (conflictingBookings.length > 0) {
-      return res.status(409).json({
-        success: false,
-        message: "The selected time slot is already booked",
-      });
-    }
-
-    // Create the booking
-    const booking = await prisma.booking.create({
-      data: {
-        userId,
-        facilityId,
-        communityId,
-        startsAt: startTime,
-        endsAt: endTime,
-        note: note?.trim() || null,
-        status: "CONFIRMED",
-      },
-      include: {
-        facility: {
-          include: {
-            configuration: true,
-          },
-        },
-      },
-    });
-
-    res.status(201).json({
-      success: true,
-      message: "Booking created successfully",
-      data: {
-        ...booking,
-        facility: {
-          ...booking.facility,
-          facilityType: booking.facility.facilityType.toLowerCase(),
-          configuration: booking.facility.configuration
-            ? {
-                ...booking.facility.configuration,
-                facilityType:
-                  booking.facility.configuration.facilityType.toLowerCase(),
-                priceType:
-                  booking.facility.configuration.priceType?.toLowerCase(),
-              }
-            : null,
-        },
-      },
-    });
-  } catch (error) {
-    console.error("Error creating booking:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to create booking",
-      error: error.message,
-    });
-  }
-});
-
-// Cancel a booking
-router.patch(
-  "/bookings/:bookingId/cancel",
-  authMiddleware,
-  async (req, res) => {
-    try {
-      const userId = req.user.id;
-      const { bookingId } = req.params;
-      const { communityId } = req.body;
-
-      if (!communityId) {
-        return res.status(400).json({
-          success: false,
-          message: "communityId is required",
-        });
-      }
-
-      const booking = await prisma.booking.findFirst({
-        where: {
-          id: bookingId,
-          communityId: communityId,
-        },
-        include: {
-          facility: {
-            include: {
-              configuration: true,
-            },
-          },
-        },
-      });
-
-      if (!booking) {
-        return res.status(404).json({
-          success: false,
-          message: "Booking not found",
-        });
-      }
-
-      if (booking.userId !== userId) {
-        return res.status(403).json({
-          success: false,
-          message: "You can only cancel your own bookings",
-        });
-      }
-
-      if (booking.status === "CANCELLED") {
-        return res.status(400).json({
-          success: false,
-          message: "Booking is already cancelled",
-        });
-      }
-
-      // Update booking status
-      const updatedBooking = await prisma.booking.update({
-        where: { id: bookingId },
-        data: { status: "CANCELLED" },
-        include: {
-          facility: {
-            include: {
-              configuration: true,
-            },
-          },
-        },
-      });
-
-      res.status(200).json({
-        success: true,
-        message: "Booking cancelled successfully",
-        data: {
-          ...updatedBooking,
-          facility: {
-            ...updatedBooking.facility,
-            facilityType: updatedBooking.facility.facilityType.toLowerCase(),
-            configuration: updatedBooking.facility.configuration
-              ? {
-                  ...updatedBooking.facility.configuration,
-                  facilityType:
-                    updatedBooking.facility.configuration.facilityType.toLowerCase(),
-                  priceType:
-                    updatedBooking.facility.configuration.priceType?.toLowerCase(),
-                }
-              : null,
-          },
-        },
-      });
-    } catch (error) {
-      console.error("Error cancelling booking:", error);
-      res.status(500).json({
-        success: false,
-        message: "Failed to cancel booking",
-        error: error.message,
-      });
-    }
-  }
-);
-
-// Get events for a resident
-router.get("/events", authMiddleware, async (req, res) => {
-  try {
-    const { communityId } = req.query;
-
-    if (!communityId) {
-      return res.status(400).json({
-        success: false,
-        message: "communityId is required",
-      });
-    }
-
-    const events = await prisma.event.findMany({
-      where: { communityId },
-      include: {
-        rsvps: true,
+        facilityId: { in: actualFacilityIds },
+        startsAt: { gte: dayStart, lt: dayEnd },
       },
       orderBy: { startsAt: "asc" },
     });
 
-    const formattedEvents = events.map((event) => ({
-      ...event,
-      attendees: event.rsvps.map((rsvp) => rsvp.userId),
+    // Map DB enum -> frontend lowercase string
+    const payload = list.map((b) => ({
+      ...b,
+      status: b.status === "CANCELLED" ? "cancelled" : "confirmed",
     }));
+
+    res.json(payload);
+  } catch (err) {
+    console.error("Error fetching bookings:", err);
+    res.status(500).json({ error: "Failed to fetch bookings" });
+  }
+});
+
+// GET /user-bookings?userId=xxx&date=YYYY-MM-DD
+router.get("/user-bookings", async (req, res) => {
+  try {
+    const { userId, date } = req.query;
+    if (!userId || !date) {
+      return res.status(400).json({ error: "userId and date are required" });
+    }
+
+    const dayStart = new Date(`${date}T00:00:00.000Z`);
+    const dayEnd = new Date(dayStart.getTime() + 24 * 3600e3);
+
+    const bookings = await prisma.booking.findMany({
+      where: {
+        userId,
+        status: "CONFIRMED",
+        startsAt: { gte: dayStart, lt: dayEnd },
+      },
+    });
+    res.json(bookings);
+  } catch (err) {
+    console.error("Error fetching user bookings:", err);
+    res.status(500).json({ error: "Failed to fetch user bookings" });
+  }
+});
+
+router.post("/bookings", async (req, res) => {
+  try {
+    const { userId, facilityId, startsAt, endsAt, note, peopleCount } =
+      req.body;
+    if (!userId || !facilityId || !startsAt || !endsAt) {
+      return res
+        .status(400)
+        .json({ error: "userId, facilityId, startsAt, endsAt are required" });
+    }
+
+    // First, try to find if this is a FacilityConfiguration ID
+    let actualFacility = null;
+    let facilityConfig = null;
+
+
+    // Check if facilityId is a FacilityConfiguration ID
+    facilityConfig = await prisma.facilityConfiguration.findUnique({
+      where: { id: facilityId },
+      include: { facilities: true },
+    });
+
+
+    if (facilityConfig) {
+      // This is a configuration ID, we need to find or create the actual facility
+      if (!facilityConfig.enabled) {
+        return res.status(400).json({ error: "Facility is not enabled" });
+      }
+
+      // Look for existing facility linked to this configuration
+      actualFacility = facilityConfig.facilities[0]; // Get first available facility
+
+      // If no facility exists, create one from the configuration
+      if (!actualFacility) {
+        const operatingHours = facilityConfig.operatingHours || "09:00-21:00";
+        const [openTime, closeTime] = operatingHours.split("-");
+
+        if (!openTime || !closeTime) {
+          return res.status(400).json({
+            error: "Invalid operating hours format in facility configuration",
+          });
+        }
+
+        try {
+          actualFacility = await prisma.facility.create({
+            data: {
+              name: `${facilityConfig.facilityType.replace(/_/g, " ")} 1`, // Convert ENUM to readable name
+              open: openTime.trim(),
+              close: closeTime.trim(),
+              slotMins: 60, // Default slot duration
+              capacity: facilityConfig.maxCapacity,
+              communityId: facilityConfig.communityId,
+              facilityType: facilityConfig.facilityType,
+              configurationId: facilityConfig.id,
+            },
+          });
+        } catch (createError) {
+          console.error("Error creating facility:", createError);
+          return res.status(500).json({
+            error: "Failed to create facility from configuration",
+          });
+        }
+      }
+    } else {
+      // Check if it's already a Facility ID
+      actualFacility = await prisma.facility.findUnique({
+        where: { id: facilityId },
+        include: { configuration: true },
+      });
+
+      if (!actualFacility) {
+        return res.status(404).json({ error: "Facility not found" });
+      }
+
+      // If facility has a configuration, check if it's enabled
+      if (
+        actualFacility.configuration &&
+        !actualFacility.configuration.enabled
+      ) {
+        return res.status(400).json({ error: "Facility is not enabled" });
+      }
+    }
+
+
+
+    if (!actualFacility) {
+      return res.status(404).json({ error: "Could not resolve facility" });
+    }
+
+    const communityId = actualFacility.communityId;
+    const start = new Date(startsAt);
+    const end = new Date(endsAt);
+
+
+
+    // Validate dates
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({ error: "Invalid date format" });
+    }
+
+    // Prevent booking in the past
+    const now = new Date();
+    if (start.toDateString() === now.toDateString() && start < now) {
+      return res.status(400).json({ error: "Cannot book a slot in the past" });
+    }
+
+    if (!(start < end)) {
+      return res.status(400).json({ error: "Invalid time range" });
+    }
+
+    // Check within operating hours (compare HH:mm strings)
+    const startHM = toHM(start);
+    const endHM = toHM(end);
+
+
+
+    if (startHM < actualFacility.open || endHM > actualFacility.close) {
+      return res.status(400).json({
+        error: `Booking must be within ${actualFacility.open}–${actualFacility.close}`,
+      });
+    }
+
+
+
+    if (!isAlignedToSlot(start, end, actualFacility.slotMins)) {
+      return res.status(400).json({
+        error: `Booking must align to a single ${actualFacility.slotMins}-minute slot`,
+      });
+    }
+
+    // 3-hour daily usage limit per user (across all facilities)
+    const dayStart = new Date(start);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+
+    const userBookings = await prisma.booking.findMany({
+      where: {
+        userId,
+        status: "CONFIRMED",
+        startsAt: { gte: dayStart, lt: dayEnd },
+      },
+    });
+
+    // Merge overlapping intervals for this user's bookings
+    function mergeIntervals(intervals) {
+      if (!intervals.length) return [];
+      intervals.sort((a, b) => a[0] - b[0]);
+      const merged = [intervals[0]];
+      for (let i = 1; i < intervals.length; i++) {
+        const last = merged[merged.length - 1];
+        if (intervals[i][0] <= last[1]) {
+          last[1] = Math.max(last[1], intervals[i][1]);
+        } else {
+          merged.push(intervals[i]);
+        }
+      }
+      return merged;
+    }
+
+    const intervals = userBookings.map((b) => [
+      new Date(b.startsAt).getTime(),
+      new Date(b.endsAt).getTime(),
+    ]);
+
+    // Add the new booking interval
+    intervals.push([start.getTime(), end.getTime()]);
+
+    const merged = mergeIntervals(intervals);
+    const alreadyBookedMins = Math.round(
+      merged.reduce((sum, [s, e]) => sum + (e - s), 0) / 60000
+    );
+
+    if (alreadyBookedMins > 180) {
+      return res.status(400).json({
+        error: "You can only book up to 3 hours per day across all facilities.",
+      });
+    }
+
+    // Find all bookings for this slot using the actual facility ID
+    const overlapping = await prisma.booking.findMany({
+      where: {
+        facilityId: actualFacility.id,
+        status: "CONFIRMED",
+        startsAt: { equals: start },
+        endsAt: { equals: end },
+      },
+    });
+
+    const totalPeople =
+      overlapping.reduce((sum, b) => sum + (b.peopleCount || 1), 0) +
+      (peopleCount || 1);
+    if (totalPeople > actualFacility.capacity) {
+      return res.status(400).json({
+        error: `This slot is full. Max allowed: ${actualFacility.capacity}`,
+      });
+    }
+
+    // Prevent partial overlaps (no booking can overlap a slot unless it's for the exact same slot)
+    const partialOverlap = await prisma.booking.findFirst({
+      where: {
+        facilityId: actualFacility.id,
+        status: "CONFIRMED",
+        OR: [
+          {
+            startsAt: { lt: end },
+            endsAt: { gt: start },
+            NOT: [{ startsAt: { equals: start }, endsAt: { equals: end } }],
+          },
+        ],
+      },
+    });
+    if (partialOverlap) {
+      return res.status(409).json({
+        error: "Time slot conflict: partial overlap with another booking.",
+      });
+    }
+
+    const created = await prisma.booking.create({
+      data: {
+        userId,
+        facilityId: actualFacility.id, // Use the actual facility ID
+        startsAt: start,
+        endsAt: end,
+        note,
+        status: "CONFIRMED",
+        peopleCount: peopleCount || 1,
+        communityId,
+      },
+      include: {
+        facility: { select: { name: true } },
+        user: { select: { name: true } },
+      },
+    });
+
+    broadcastEvent("booking", {
+      action: "created",
+      bookingId: created.id,
+      facilityId: actualFacility.id,
+    });
+
+    res.status(201).json({ ...created, status: "confirmed" });
+  } catch (err) {
+    console.error("Error creating booking:", err);
+    res.status(500).json({ error: "Failed to create booking" });
+  }
+});
+
+// PATCH /bookings/:id/cancel
+router.patch("/bookings/:id/cancel", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updated = await prisma.booking.update({
+      where: { id },
+      data: { status: "CANCELLED" },
+    });
+    broadcastEvent("booking", {
+      action: "cancelled",
+      bookingId: id,
+      facilityId: updated.facilityId,
+    });
+    res.json({ ...updated, status: "cancelled" });
+  } catch (err) {
+    console.error("Error cancelling booking:", err);
+    res.status(500).json({ error: "Failed to cancel booking" });
+  }
+});
+
+// Get resident profile with unit and block information
+router.get("/profile", async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        status: true,
+        communityId: true,
+        unitId: true,
+        createdAt: true,
+        unit: {
+          select: {
+            id: true,
+            number: true,
+            block: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+        community: {
+          select: {
+            id: true,
+            name: true,
+            address: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const profileData = {
+      ...user,
+      unitNumber: user.unit?.number || null,
+      blockName: user.unit?.block?.name || null,
+      communityName: user.community?.name || null,
+      communityAddress: user.community?.address || null,
+    };
 
     res.status(200).json({
       success: true,
-      data: formattedEvents,
+      data: profileData,
     });
   } catch (error) {
-    console.error("Error fetching events:", error);
+    console.error("Error fetching profile:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to fetch events",
+      message: "Failed to fetch profile",
       error: error.message,
     });
   }
 });
 
-// RSVP to an event
-router.post("/events/:eventId/rsvp", authMiddleware, async (req, res) => {
+// Get all announcements for the resident's community
+router.get("/announcements", async (req, res) => {
   try {
-    const userId = req.user.id;
-    const { eventId } = req.params;
-    const { communityId } = req.body;
+    const { communityId } = req.query;
 
     if (!communityId) {
-      return res.status(400).json({
-        success: false,
-        message: "communityId is required",
-      });
+      return res.status(400).json({ error: "communityId is required" });
     }
 
-    // Check if event exists
-    const event = await prisma.event.findFirst({
-      where: {
-        id: eventId,
-        communityId,
+    const announcements = await prisma.announcement.findMany({
+      where: { communityId },
+      select: {
+        id: true,
+        title: true,
+        content: true,
+        createdAt: true,
+        updatedAt: true,
       },
-      include: {
-        rsvps: true,
-      },
+      orderBy: { createdAt: "desc" },
     });
-
-    if (!event) {
-      return res.status(404).json({
-        success: false,
-        message: "Event not found",
-      });
-    }
-
-    // Check if user is already attending
-    const existingRSVP = await prisma.rSVP.findUnique({
-      where: {
-        userId_eventId: { eventId, userId },
-      },
-    });
-
-    let updatedEvent;
-
-    if (existingRSVP) {
-      // Remove RSVP
-      await prisma.rSVP.delete({
-        where: {
-          userId_eventId: { eventId, userId },
-        },
-      });
-
-      updatedEvent = await prisma.event.findUnique({
-        where: { id: eventId },
-        include: {
-          rsvps: true,
-        },
-      });
-    } else {
-      // Add RSVP
-      await prisma.rSVP.create({
-        data: {
-          eventId,
-          userId,
-        },
-      });
-
-      updatedEvent = await prisma.event.findUnique({
-        where: { id: eventId },
-        include: {
-          rsvps: true,
-        },
-      });
-    }
-
-    const formattedEvent = {
-      ...updatedEvent,
-      attendees: updatedEvent.rsvps.map((rsvp) => rsvp.userId),
-    };
 
     res.status(200).json({
       success: true,
-      data: formattedEvent,
+      data: announcements,
     });
   } catch (error) {
-    console.error("Error updating RSVP:", error);
+    console.error("Error fetching announcements:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to update RSVP",
+      message: "Failed to fetch announcements",
+      error: error.message,
+    });
+  }
+});
+
+// Get resident's payments
+router.get("/payments", async (req, res) => {
+  try {
+    const { communityId, status, from, to } = req.query;
+    const userId = req.user.id;
+
+    if (!communityId) {
+      return res.status(400).json({ error: "communityId is required" });
+    }
+
+    let whereClause = {
+      userId,
+      communityId,
+    };
+
+    // Status filter
+    if (status) {
+      whereClause.status = status.toUpperCase();
+    }
+
+    // Date range filter
+    if (from || to) {
+      whereClause.createdAt = {};
+      if (from) {
+        whereClause.createdAt.gte = new Date(from);
+      }
+      if (to) {
+        whereClause.createdAt.lte = new Date(to);
+      }
+    }
+
+    const payments = await prisma.payment.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        amount: true,
+        currency: true,
+        description: true,
+        method: true,
+        status: true,
+        dueDate: true,
+        paidAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    res.status(200).json({
+      success: true,
+      data: payments,
+    });
+  } catch (error) {
+    console.error("Error fetching payments:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch payments",
+      error: error.message,
+    });
+  }
+});
+
+// Get resident's community statistics
+router.get("/community-stats", async (req, res) => {
+  try {
+    const { communityId } = req.query;
+
+    if (!communityId) {
+      return res.status(400).json({ error: "communityId is required" });
+    }
+
+    const [
+      totalBlocks,
+      totalUnits,
+      totalResidents,
+      totalFacilities,
+      myActiveTickets,
+      myBookingsThisMonth,
+    ] = await Promise.all([
+      prisma.block.count({ where: { communityId } }),
+      prisma.unit.count({ where: { communityId } }),
+      prisma.user.count({
+        where: {
+          communityId,
+          role: "RESIDENT",
+          status: "APPROVED",
+        },
+      }),
+      prisma.facility.count({ where: { communityId } }),
+      prisma.ticket.count({
+        where: {
+          userId: req.user.id,
+          communityId,
+          status: { in: ["SUBMITTED", "IN_PROGRESS"] },
+        },
+      }),
+      prisma.booking.count({
+        where: {
+          userId: req.user.id,
+          communityId,
+          createdAt: {
+            gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+          },
+        },
+      }),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        community: {
+          totalBlocks,
+          totalUnits,
+          totalResidents,
+          totalFacilities,
+        },
+        personal: {
+          myActiveTickets,
+          myBookingsThisMonth,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching community stats:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch community statistics",
+      error: error.message,
+    });
+  }
+});
+
+// Get neighbor information (residents in the same block)
+router.get("/neighbors", async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // Get current user's unit and block information
+    const currentUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        unitId: true,
+        unit: {
+          select: {
+            blockId: true,
+            block: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!currentUser?.unit?.blockId) {
+      return res.status(200).json({
+        success: true,
+        data: [],
+        message: "User not assigned to any unit/block",
+      });
+    }
+
+    // Get all residents in the same block
+    const neighbors = await prisma.user.findMany({
+      where: {
+        unit: {
+          blockId: currentUser.unit.blockId,
+        },
+        role: "RESIDENT",
+        status: "APPROVED",
+        NOT: {
+          id: userId, // Exclude current user
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        unit: {
+          select: {
+            id: true,
+            number: true,
+          },
+        },
+      },
+      orderBy: {
+        unit: {
+          number: "asc",
+        },
+      },
+    });
+
+    const formattedNeighbors = neighbors.map((neighbor) => ({
+      id: neighbor.id,
+      name: neighbor.name,
+      email: neighbor.email,
+      unitNumber: neighbor.unit?.number || "N/A",
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: formattedNeighbors,
+      blockInfo: {
+        id: currentUser.unit.block.id,
+        name: currentUser.unit.block.name,
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching neighbors:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch neighbors",
       error: error.message,
     });
   }

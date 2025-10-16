@@ -1,6 +1,6 @@
 import supabase from "../lib/supabase";
 import axios from "axios";
-import { setUser } from "../lib/auth";
+import { setToken, setUser } from "../lib/auth";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
 
@@ -30,8 +30,7 @@ export default function AuthCallback() {
 
         if (res.data?.exists) {
           if (res.data.jwttoken)
-            localStorage.setItem("token", res.data.jwttoken);
-
+            setToken(res.data.jwttoken);
           if (res.data.user) setUser(res.data.user);
 
           if (res.data.user.role === "ADMIN") {
@@ -49,7 +48,7 @@ export default function AuthCallback() {
         });
 
         if (signupRes.data?.jwttoken)
-          localStorage.setItem("token", signupRes.data.jwttoken);
+          setToken(signupRes.data.jwttoken);
 
         if (signupRes.data?.user) setUser(signupRes.data.user);
 

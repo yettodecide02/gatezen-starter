@@ -22,7 +22,7 @@ import {
   YAxis,
   CartesianGrid,
 } from "recharts";
-import { getUser } from "../lib/auth";
+import { getToken, getUser } from "../lib/auth";
 
 const COLORS = [
   "#6366f1",
@@ -40,13 +40,15 @@ export default function Dashboard() {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const token = localStorage.getItem("token");
+  const token = getToken();
 
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
         setLoading(true);
+        if(ann.length !== 0 && payments.length !== 0 && maintenance.length !== 0 && bookings.length !== 0) return;
+        if (!token) return;
         const res = await axios.get(
           import.meta.env.VITE_API_URL + "/resident/dashboard",
           {
@@ -123,8 +125,8 @@ export default function Dashboard() {
         return ["PENDING", "APPROVED", "CONFIRMED"].includes(status);
       })
       .sort((a, b) => {
-        const dateA = new Date(a.createdAt);
-        const dateB = new Date(b.createdAt);
+        const dateA = new Date(a.startsAt);
+        const dateB = new Date(b.startsAt);
         return dateB - dateA; // Most recent first
       })
       .slice(0, 4);
@@ -327,7 +329,7 @@ export default function Dashboard() {
             <li key={e.id} className="list-row">
               <div className="list-title">{e.facility?.name || "Booking"}</div>
               <div className="list-sub">
-                {new Date(e.createdAt).toLocaleString()}
+                {new Date(e.startsAt).toLocaleString()}
               </div>
               <div className="badge">{e.status || "PENDING"}</div>
             </li>

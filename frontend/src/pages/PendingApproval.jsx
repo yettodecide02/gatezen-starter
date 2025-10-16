@@ -1,13 +1,13 @@
 import { FiClock, FiUserCheck, FiMail, FiLogOut } from "react-icons/fi";
 import { useNavigate } from "react-router-dom";
+import { clearUser, getUser } from "../lib/auth";
 
 export default function PendingApproval() {
   const navigate = useNavigate();
-  const user = JSON.parse(localStorage.getItem("user") || "{}");
+  const user = getUser()
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
+    clearUser()
     navigate("/");
   };
 

@@ -9,7 +9,7 @@ import {
   FiEye,
   FiEyeOff,
 } from "react-icons/fi";
-import { setUser } from "../../lib/auth";
+import { setToken, setUser } from "../../lib/auth";
 import axios from "axios";
 import ReCAPTCHA from "react-google-recaptcha";
 
@@ -67,31 +67,26 @@ function AdminSignup() {
     }
 
     try {
+      // Send captcha token to backend for verification
+      const requestData = {
+        ...formData,
+        "g-recaptcha-response": captcha, // Use the exact field name expected by backend
+      };
 
-      const verifyRes = await axios.post(
-        "https://www.google.com/recaptcha/api/siteverify",
-        new URLSearchParams({
-          secret: import.meta.env.VITE_RECAPTCHA_SECRET_KEY,
-          response: captcha,
-        })
-      );
+      console.log("Sending signup request:", {
+        ...requestData,
+        password: "[HIDDEN]",
+      });
 
-      if (!verifyRes.data.success) {
-        setError("reCAPTCHA verification failed. Please try again.");
-        setLoading(false);
-        return;
-      }
-
-     const res = await axios.post(
+      const res = await axios.post(
         import.meta.env.VITE_API_URL + "/auth/community-signup",
-        formData
+        requestData
       );
 
       if (res.data.user && res.data.jwttoken) {
         // Store user data and token
-        setUser(res.data.user, res.data.jwttoken);
-        localStorage.setItem("token", res.data.jwttoken);
-        localStorage.setItem("user", JSON.stringify(res.data.user));
+        setUser(res.data.user);
+        setToken(res.data.jwttoken);
 
         // Navigate to community configuration page
         navigate("/admin/community");
@@ -99,6 +94,7 @@ function AdminSignup() {
     } catch (err) {
       console.error("Admin signup error:", err);
       setError(err.response?.data?.error || "Failed to create admin account");
+      setCaptcha(null); // Reset captcha on error so user can retry
     } finally {
       setLoading(false);
     }

@@ -36,6 +36,11 @@ import supabase from "./lib/supabase.js";
 import ForgotPassword from "./pages/ForgotPassword.jsx";
 import Announcements from "./pages/admin/Announcements.jsx";
 import Community from "./pages/admin/Community.jsx";
+import Blocks from "./pages/admin/Blocks.jsx";
+import MaintenanceAdmin from "./pages/admin/Maintenance.jsx";
+import BookingsAdmin from "./pages/admin/Bookings.jsx";
+import PaymentsAdmin from "./pages/admin/Payments.jsx";
+import CreateStaff from "./pages/admin/CreateStaff.jsx";
 
 function Shell({ children }) {
   const navigate = useNavigate();
@@ -172,8 +177,18 @@ function AdminShell({ children }) {
               label="Payments"
             />
             <AdminItem
+              to="/admin/blocks"
+              icon={<FiHome />}
+              label="Blocks & Units"
+            />
+            <AdminItem
+              to="/admin/create-staff"
+              icon={<FiShield />}
+              label="Create Staff"
+            />
+            <AdminItem
               to="/admin/community"
-              icon={<FiUsers />}
+              icon={<FiSettings />}
               label="Community"
             />
             <div className="nav-divider" />
@@ -324,11 +339,61 @@ export default function App() {
         }
       />
       <Route
+        path="/admin/maintenance"
+        element={
+          <ProtectedRoute>
+            <AdminShell>
+              <MaintenanceAdmin />
+            </AdminShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/bookings"
+        element={
+          <ProtectedRoute>
+            <AdminShell>
+              <BookingsAdmin />
+            </AdminShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/payments"
+        element={
+          <ProtectedRoute>
+            <AdminShell>
+              <PaymentsAdmin />
+            </AdminShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/admin/community"
         element={
           <ProtectedRoute>
             <AdminShell>
               <Community />
+            </AdminShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/blocks"
+        element={
+          <ProtectedRoute>
+            <AdminShell>
+              <Blocks />
+            </AdminShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/create-staff"
+        element={
+          <ProtectedRoute>
+            <AdminShell>
+              <CreateStaff />
             </AdminShell>
           </ProtectedRoute>
         }

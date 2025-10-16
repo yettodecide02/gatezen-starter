@@ -7,7 +7,8 @@ import {
   FiMessageSquare,
 } from "react-icons/fi";
 import axios from "axios";
-import { getUser } from "../../lib/auth";
+import { getToken, getUser } from "../../lib/auth";
+import { ToastContainer, useToast } from "../../components/Toast";
 
 const url = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
@@ -20,18 +21,22 @@ export default function Announcements() {
     content: "",
   });
   const [createLoading, setCreateLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
 
-  const token = localStorage.getItem("token");
+  // Toast management using custom hook
+  const { toasts, addToast, removeToast } = useToast();
+
+  const token = getToken();
 
   // Fetch all announcements
   const fetchAnnouncements = async () => {
     const user = getUser();
-    console.log("User data:", user);
 
     if (!user || !user.communityId) {
-      setError("User not authenticated or missing community information");
+      addToast(
+        "error",
+        "Authentication Error",
+        "User not authenticated or missing community information"
+      );
       setLoading(false);
       return;
     }
@@ -47,7 +52,7 @@ export default function Announcements() {
       setAnnouncements(response.data.announcements || []);
     } catch (error) {
       console.error("Error fetching announcements:", error);
-      setError("Failed to load announcements");
+      addToast("error", "Load Failed", "Failed to load announcements");
     } finally {
       setLoading(false);
     }
@@ -57,26 +62,22 @@ export default function Announcements() {
   const handleCreateAnnouncement = async (e) => {
     e.preventDefault();
     if (!newAnnouncement.title.trim() || !newAnnouncement.content.trim()) {
-      setError("Title and content are required");
+      addToast("error", "Validation Error", "Title and content are required");
       return;
     }
 
     const user = getUser();
     if (!user || !user.communityId) {
-      setError("User not authenticated or missing community information");
+      addToast(
+        "error",
+        "Authentication Error",
+        "User not authenticated or missing community information"
+      );
       return;
     }
 
-    console.log("Creating announcement with:", {
-      title: newAnnouncement.title.trim(),
-      content: newAnnouncement.content.trim(),
-      communityId: user.communityId,
-      user: user,
-    });
-
     try {
       setCreateLoading(true);
-      setError("");
 
       const response = await axios.post(
         `${url}/admin/create-announcement`,
@@ -96,14 +97,15 @@ export default function Announcements() {
       setAnnouncements((prev) => [response.data.announcement, ...prev]);
       setNewAnnouncement({ title: "", content: "" });
       setShowCreateModal(false);
-      setSuccess("Announcement created successfully!");
-
-      // Clear success message after 3 seconds
-      setTimeout(() => setSuccess(""), 3000);
+      addToast("success", "Success", "Announcement created successfully!");
     } catch (error) {
       console.error("Error creating announcement:", error);
       console.error("Error response:", error.response?.data);
-      setError(error.response?.data?.error || "Failed to create announcement");
+      addToast(
+        "error",
+        "Create Failed",
+        error.response?.data?.error || "Failed to create announcement"
+      );
     } finally {
       setCreateLoading(false);
     }
@@ -117,7 +119,11 @@ export default function Announcements() {
 
     const user = getUser();
     if (!user || !user.communityId) {
-      setError("User not authenticated or missing community information");
+      addToast(
+        "error",
+        "Authentication Error",
+        "User not authenticated or missing community information"
+      );
       return;
     }
 
@@ -131,13 +137,14 @@ export default function Announcements() {
 
       // Remove the announcement from the list
       setAnnouncements((prev) => prev.filter((ann) => ann.id !== id));
-      setSuccess("Announcement deleted successfully!");
-
-      // Clear success message after 3 seconds
-      setTimeout(() => setSuccess(""), 3000);
+      addToast("success", "Deleted", "Announcement deleted successfully!");
     } catch (error) {
       console.error("Error deleting announcement:", error);
-      setError(error.response?.data?.error || "Failed to delete announcement");
+      addToast(
+        "error",
+        "Delete Failed",
+        error.response?.data?.error || "Failed to delete announcement"
+      );
     }
   };
 
@@ -178,27 +185,6 @@ export default function Announcements() {
           Create Announcement
         </button>
       </div>
-
-      {/* Error/Success Messages */}
-      {error && (
-        <div className="auth-error" style={{ marginBottom: "16px" }}>
-          {error}
-        </div>
-      )}
-
-      {success && (
-        <div
-          className="auth-error"
-          style={{
-            marginBottom: "16px",
-            background: "#d1fae5",
-            color: "#065f46",
-            borderColor: "#a7f3d0",
-          }}
-        >
-          {success}
-        </div>
-      )}
 
       {/* Loading State */}
       {loading ? (
@@ -277,11 +263,6 @@ export default function Announcements() {
             </div>
             <form onSubmit={handleCreateAnnouncement}>
               <div className="modal-body">
-                {error && (
-                  <div className="auth-error" style={{ marginBottom: "12px" }}>
-                    {error}
-                  </div>
-                )}
                 <div>
                   <label
                     className="label"
@@ -340,7 +321,6 @@ export default function Announcements() {
                   onClick={() => {
                     setShowCreateModal(false);
                     setNewAnnouncement({ title: "", content: "" });
-                    setError("");
                   }}
                   disabled={createLoading}
                 >
@@ -362,6 +342,9 @@ export default function Announcements() {
           </div>
         </div>
       )}
+
+      {/* Toast Container */}
+      <ToastContainer toasts={toasts} onClose={removeToast} />
     </div>
   );
 }
