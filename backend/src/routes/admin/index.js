@@ -1,6 +1,7 @@
 import express from "express";
 import nodemailer from "nodemailer";
 import prisma from "../../../lib/prisma.js";
+import jwt from "jsonwebtoken";
 import { UserStatus, FacilityType, PriceType } from "@prisma/client";
 import { authMiddleware } from "../../middleware/auth.js";
 
@@ -84,6 +85,149 @@ router.get("/dashboard", async (req, res) => {
   }
 });
 
+// Get dashboard statistics
+router.get("/dashboard-stats", async (req, res) => {
+  try {
+    const { communityId } = req.query;
+
+    if (!communityId) {
+      return res.status(400).json({ error: "Community ID is required" });
+    }
+
+    const community = await prisma.community.findUnique({
+      where: { id: communityId },
+    });
+
+    if (!community) {
+      return res.status(404).json({ error: "No community found" });
+    }
+
+    // Get counts for various entities
+    const [
+      totalBlocks,
+      totalUnits,
+      totalResidents,
+      pendingRequests,
+      totalTickets,
+      openTickets,
+      totalBookings,
+      totalPayments,
+      pendingPayments,
+    ] = await Promise.all([
+      prisma.block.count({ where: { communityId } }),
+      prisma.unit.count({ where: { communityId } }),
+      prisma.user.count({
+        where: {
+          communityId,
+          role: "RESIDENT",
+          status: "APPROVED",
+        },
+      }),
+      prisma.user.count({
+        where: {
+          communityId,
+          role: "RESIDENT",
+          status: "PENDING",
+        },
+      }),
+      prisma.ticket.count({ where: { communityId } }),
+      prisma.ticket.count({
+        where: {
+          communityId,
+          status: { in: ["SUBMITTED", "IN_PROGRESS"] },
+        },
+      }),
+      prisma.booking.count({ where: { communityId } }),
+      prisma.payment.count({ where: { communityId } }),
+      prisma.payment.count({
+        where: {
+          communityId,
+          status: "PENDING",
+        },
+      }),
+    ]);
+
+    // Get occupancy statistics
+    const unitsWithResidents = await prisma.unit.count({
+      where: {
+        communityId,
+        residents: {
+          some: {
+            status: "APPROVED",
+          },
+        },
+      },
+    });
+
+    const occupancyRate =
+      totalUnits > 0 ? (unitsWithResidents / totalUnits) * 100 : 0;
+
+    // Get recent activities count
+    const recentDate = new Date();
+    recentDate.setDate(recentDate.getDate() - 7); // Last 7 days
+
+    const recentActivities = await Promise.all([
+      prisma.user.count({
+        where: {
+          communityId,
+          createdAt: { gte: recentDate },
+        },
+      }),
+      prisma.ticket.count({
+        where: {
+          communityId,
+          createdAt: { gte: recentDate },
+        },
+      }),
+      prisma.booking.count({
+        where: {
+          communityId,
+          createdAt: { gte: recentDate },
+        },
+      }),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        infrastructure: {
+          totalBlocks,
+          totalUnits,
+          occupancyRate: Math.round(occupancyRate * 100) / 100,
+          unitsWithResidents,
+          vacantUnits: totalUnits - unitsWithResidents,
+        },
+        residents: {
+          totalResidents,
+          pendingRequests,
+          approvedResidents: totalResidents,
+        },
+        maintenance: {
+          totalTickets,
+          openTickets,
+          closedTickets: totalTickets - openTickets,
+        },
+        bookings: {
+          totalBookings,
+        },
+        payments: {
+          totalPayments,
+          pendingPayments,
+          completedPayments: totalPayments - pendingPayments,
+        },
+        recentActivity: {
+          newResidents: recentActivities[0],
+          newTickets: recentActivities[1],
+          newBookings: recentActivities[2],
+        },
+      },
+    });
+  } catch (e) {
+    console.error("Error fetching dashboard statistics:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // Resident management routes
 router.get("/resident-requests", async (req, res) => {
   try {
@@ -100,10 +244,51 @@ router.get("/resident-requests", async (req, res) => {
         status: UserStatus.PENDING,
         communityId: community.id,
       },
-      select: { id: true, name: true, email: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        unitId: true,
+        unit: {
+          select: {
+            id: true,
+            number: true,
+            block: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [
+        {
+          unit: {
+            block: {
+              name: "asc",
+            },
+          },
+        },
+        {
+          unit: {
+            number: "asc",
+          },
+        },
+        {
+          name: "asc",
+        },
+      ],
     });
 
-    res.status(200).json(pendingUsers);
+    // Transform the data to include block and unit information
+    const pendingUsersWithUnitInfo = pendingUsers.map((user) => ({
+      ...user,
+      blockName: user.unit?.block?.name || null,
+      unitNumber: user.unit?.number || null,
+    }));
+
+    res.status(200).json(pendingUsersWithUnitInfo);
   } catch (e) {
     console.error("Error fetching resident requests:", e);
     res.status(500).json({ error: "Internal server error" });
@@ -173,9 +358,53 @@ router.get("/residents", async (req, res) => {
         role: "RESIDENT",
         communityId: community.id,
       },
-      select: { id: true, name: true, email: true, role: true, status: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        status: true,
+        unitId: true,
+        unit: {
+          select: {
+            id: true,
+            number: true,
+            block: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [
+        {
+          unit: {
+            block: {
+              name: "asc",
+            },
+          },
+        },
+        {
+          unit: {
+            number: "asc",
+          },
+        },
+        {
+          name: "asc",
+        },
+      ],
     });
-    res.status(200).json({ residents });
+
+    // Transform the data to include block and unit information
+    const residentsWithUnitInfo = residents.map((resident) => ({
+      ...resident,
+      blockName: resident.unit?.block?.name || null,
+      unitNumber: resident.unit?.number || null,
+    }));
+
+    res.status(200).json({ residents: residentsWithUnitInfo });
   } catch (e) {
     console.error("Error fetching residents:", e);
     res.status(500).json({ error: "Internal server error" });
@@ -265,7 +494,7 @@ router.get("/announcements", async (req, res) => {
       return res.status(404).json({ error: "No community found" });
     }
 
-    const announcements = await prisma.announcements.findMany({
+    const announcements = await prisma.announcement.findMany({
       where: { communityId: community.id },
       orderBy: { createdAt: "desc" },
     });
@@ -297,11 +526,10 @@ router.post("/create-announcement", async (req, res) => {
       return res.status(404).json({ error: "No community found" });
     }
 
-    const announcement = await prisma.announcements.create({
+    const announcement = await prisma.announcement.create({
       data: {
         title,
         content,
-        userId,
         communityId: community.id,
       },
       select: { id: true, title: true, content: true, createdAt: true },
@@ -318,13 +546,550 @@ router.delete("/announcements/:id", async (req, res) => {
   const { id } = req.params;
 
   try {
-    await prisma.announcements.delete({
+    await prisma.announcement.delete({
       where: { id: id },
     });
 
     res.status(200).json({ message: "Announcement deleted successfully" });
   } catch (e) {
     console.error("Error deleting announcement:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// === BLOCK MANAGEMENT ROUTES ===
+
+// Get all blocks for a community
+router.get("/blocks", async (req, res) => {
+  try {
+    const { communityId } = req.query;
+    if (!communityId) {
+      return res.status(400).json({ error: "Community ID is required" });
+    }
+
+    const blocks = await prisma.block.findMany({
+      where: { communityId },
+      include: {
+        units: {
+          include: {
+            residents: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                status: true,
+              },
+            },
+          },
+          orderBy: { number: "asc" },
+        },
+      },
+      orderBy: { name: "asc" },
+    });
+
+    res.status(200).json({ blocks });
+  } catch (e) {
+    console.error("Error fetching blocks:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Create a new block
+router.post("/blocks", async (req, res) => {
+  try {
+    const { name, communityId } = req.body;
+
+    if (!name || !communityId) {
+      return res
+        .status(400)
+        .json({ error: "Name and community ID are required" });
+    }
+
+    // Check if block name already exists in the community
+    const existingBlock = await prisma.block.findFirst({
+      where: {
+        name,
+        communityId,
+      },
+    });
+
+    if (existingBlock) {
+      return res.status(400).json({
+        error: "Block with this name already exists in the community",
+      });
+    }
+
+    const block = await prisma.block.create({
+      data: {
+        name,
+        communityId,
+      },
+      include: {
+        units: true,
+      },
+    });
+
+    res.status(201).json({ message: "Block created successfully", block });
+  } catch (e) {
+    console.error("Error creating block:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Update a block
+router.put("/blocks/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ error: "Name is required" });
+    }
+
+    const block = await prisma.block.findUnique({
+      where: { id },
+    });
+
+    if (!block) {
+      return res.status(404).json({ error: "Block not found" });
+    }
+
+    // Check if block name already exists in the community (excluding current block)
+    const existingBlock = await prisma.block.findFirst({
+      where: {
+        name,
+        communityId: block.communityId,
+        NOT: { id },
+      },
+    });
+
+    if (existingBlock) {
+      return res.status(400).json({
+        error: "Block with this name already exists in the community",
+      });
+    }
+
+    const updatedBlock = await prisma.block.update({
+      where: { id },
+      data: { name },
+      include: {
+        units: {
+          include: {
+            residents: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                status: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    res
+      .status(200)
+      .json({ message: "Block updated successfully", block: updatedBlock });
+  } catch (e) {
+    console.error("Error updating block:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Delete a block
+router.delete("/blocks/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const block = await prisma.block.findUnique({
+      where: { id },
+      include: {
+        units: {
+          include: {
+            residents: true,
+          },
+        },
+      },
+    });
+
+    if (!block) {
+      return res.status(404).json({ error: "Block not found" });
+    }
+
+    // Check if block has units with residents
+    const hasResidents = block.units.some((unit) => unit.residents.length > 0);
+    if (hasResidents) {
+      return res.status(400).json({
+        error:
+          "Cannot delete block with residents. Please reassign residents first.",
+      });
+    }
+
+    await prisma.block.delete({
+      where: { id },
+    });
+
+    res.status(200).json({ message: "Block deleted successfully" });
+  } catch (e) {
+    console.error("Error deleting block:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// === UNIT MANAGEMENT ROUTES ===
+
+// Get all units for a community or block
+router.get("/units", async (req, res) => {
+  try {
+    const { communityId, blockId } = req.query;
+
+    if (!communityId) {
+      return res.status(400).json({ error: "Community ID is required" });
+    }
+
+    const whereClause = { communityId };
+    if (blockId) {
+      whereClause.blockId = blockId;
+    }
+
+    const units = await prisma.unit.findMany({
+      where: whereClause,
+      include: {
+        block: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        residents: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            status: true,
+          },
+        },
+      },
+      orderBy: [
+        {
+          block: {
+            name: "asc",
+          },
+        },
+        {
+          number: "asc",
+        },
+      ],
+    });
+
+    res.status(200).json({ units });
+  } catch (e) {
+    console.error("Error fetching units:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Create a new unit
+router.post("/units", async (req, res) => {
+  try {
+    const { number, blockId, communityId } = req.body;
+
+    if (!number || !blockId || !communityId) {
+      return res
+        .status(400)
+        .json({ error: "Number, block ID, and community ID are required" });
+    }
+
+    // Check if unit number already exists in the block
+    const existingUnit = await prisma.unit.findFirst({
+      where: {
+        number,
+        blockId,
+      },
+    });
+
+    if (existingUnit) {
+      return res
+        .status(400)
+        .json({ error: "Unit with this number already exists in the block" });
+    }
+
+    // Verify block exists and belongs to the community
+    const block = await prisma.block.findFirst({
+      where: {
+        id: blockId,
+        communityId,
+      },
+    });
+
+    if (!block) {
+      return res
+        .status(400)
+        .json({ error: "Block not found in the specified community" });
+    }
+
+    const unit = await prisma.unit.create({
+      data: {
+        number,
+        blockId,
+        communityId,
+      },
+      include: {
+        block: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        residents: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            status: true,
+          },
+        },
+      },
+    });
+
+    res.status(201).json({ message: "Unit created successfully", unit });
+  } catch (e) {
+    console.error("Error creating unit:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Update a unit
+router.put("/units/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { number, blockId } = req.body;
+
+    if (!number) {
+      return res.status(400).json({ error: "Number is required" });
+    }
+
+    const unit = await prisma.unit.findUnique({
+      where: { id },
+    });
+
+    if (!unit) {
+      return res.status(404).json({ error: "Unit not found" });
+    }
+
+    const updateData = { number };
+
+    // If blockId is provided, validate and update it
+    if (blockId && blockId !== unit.blockId) {
+      const block = await prisma.block.findFirst({
+        where: {
+          id: blockId,
+          communityId: unit.communityId,
+        },
+      });
+
+      if (!block) {
+        return res
+          .status(400)
+          .json({ error: "Block not found in the same community" });
+      }
+
+      updateData.blockId = blockId;
+    }
+
+    // Check if unit number already exists in the target block (excluding current unit)
+    const targetBlockId = blockId || unit.blockId;
+    const existingUnit = await prisma.unit.findFirst({
+      where: {
+        number,
+        blockId: targetBlockId,
+        NOT: { id },
+      },
+    });
+
+    if (existingUnit) {
+      return res
+        .status(400)
+        .json({ error: "Unit with this number already exists in the block" });
+    }
+
+    const updatedUnit = await prisma.unit.update({
+      where: { id },
+      data: updateData,
+      include: {
+        block: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        residents: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            status: true,
+          },
+        },
+      },
+    });
+
+    res
+      .status(200)
+      .json({ message: "Unit updated successfully", unit: updatedUnit });
+  } catch (e) {
+    console.error("Error updating unit:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Delete a unit
+router.delete("/units/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const unit = await prisma.unit.findUnique({
+      where: { id },
+      include: {
+        residents: true,
+      },
+    });
+
+    if (!unit) {
+      return res.status(404).json({ error: "Unit not found" });
+    }
+
+    // Check if unit has residents
+    if (unit.residents.length > 0) {
+      return res.status(400).json({
+        error:
+          "Cannot delete unit with residents. Please reassign residents first.",
+      });
+    }
+
+    await prisma.unit.delete({
+      where: { id },
+    });
+
+    res.status(200).json({ message: "Unit deleted successfully" });
+  } catch (e) {
+    console.error("Error deleting unit:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Assign resident to unit
+router.post("/units/:unitId/assign-resident", async (req, res) => {
+  try {
+    const { unitId } = req.params;
+    const { userId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: "User ID is required" });
+    }
+
+    // Verify unit exists
+    const unit = await prisma.unit.findUnique({
+      where: { id: unitId },
+    });
+
+    if (!unit) {
+      return res.status(404).json({ error: "Unit not found" });
+    }
+
+    // Verify user exists and belongs to the same community
+    const user = await prisma.user.findFirst({
+      where: {
+        id: userId,
+        communityId: unit.communityId,
+        role: "RESIDENT",
+      },
+    });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ error: "Resident not found in this community" });
+    }
+
+    // Update user's unit assignment
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: { unitId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        status: true,
+        unitId: true,
+        unit: {
+          select: {
+            id: true,
+            number: true,
+            block: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    res.status(200).json({
+      message: "Resident assigned to unit successfully",
+      user: updatedUser,
+    });
+  } catch (e) {
+    console.error("Error assigning resident to unit:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Remove resident from unit
+router.post("/units/:unitId/remove-resident", async (req, res) => {
+  try {
+    const { unitId } = req.params;
+    const { userId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: "User ID is required" });
+    }
+
+    // Verify user is assigned to this unit
+    const user = await prisma.user.findFirst({
+      where: {
+        id: userId,
+        unitId: unitId,
+        role: "RESIDENT",
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: "Resident not found in this unit" });
+    }
+
+    // Remove unit assignment
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: { unitId: null },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        status: true,
+        unitId: true,
+      },
+    });
+
+    res.status(200).json({
+      message: "Resident removed from unit successfully",
+      user: updatedUser,
+    });
+  } catch (e) {
+    console.error("Error removing resident from unit:", e);
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -336,7 +1101,7 @@ router.get("/community", async (req, res) => {
   try {
     // Get the user's community ID from the authenticated user
     const user = await prisma.user.findUnique({
-      where: { id: req.user.userId },
+      where: { id: req.user.id },
       select: { communityId: true },
     });
 
@@ -413,10 +1178,29 @@ router.post("/community", async (req, res) => {
         },
       });
 
-      // Delete existing facility configurations
+      // Delete existing facility configurations and their associated facilities
+      const existingConfigs = await prisma.facilityConfiguration.findMany({
+        where: { communityId: community.id },
+        select: { id: true },
+      });
+
+      // Delete actual facilities first (due to foreign key constraints)
+      await prisma.facility.deleteMany({
+        where: {
+          configurationId: {
+            in: existingConfigs.map((config) => config.id),
+          },
+        },
+      });
+
+      // Then delete facility configurations
       await prisma.facilityConfiguration.deleteMany({
         where: { communityId: community.id },
       });
+
+      console.log(
+        `Deleted existing facility configurations and facilities for community ${community.id}`
+      );
     } else {
       // Create new community
       community = await prisma.community.create({
@@ -450,9 +1234,51 @@ router.post("/community", async (req, res) => {
         };
       });
 
-      await prisma.facilityConfiguration.createMany({
-        data: facilityData,
-      });
+      // Create facility configurations
+      const createdConfigs = await Promise.all(
+        facilityData.map(async (configData) => {
+          return await prisma.facilityConfiguration.create({
+            data: configData,
+          });
+        })
+      );
+
+      console.log(`Created ${createdConfigs.length} facility configurations`);
+
+      // Create actual facility records for enabled facilities
+      for (const config of createdConfigs) {
+        if (config.enabled) {
+          const operatingHours = config.operatingHours || "09:00-21:00";
+          const [openTime, closeTime] = operatingHours.split("-");
+
+          const facilitiesToCreate = [];
+          for (let i = 1; i <= config.quantity; i++) {
+            facilitiesToCreate.push({
+              name: `${config.facilityType
+                .replace(/_/g, " ")
+                .toLowerCase()
+                .replace(/\b\w/g, (l) => l.toUpperCase())} ${i}`,
+              facilityType: config.facilityType,
+              open: openTime?.trim() || "09:00",
+              close: closeTime?.trim() || "21:00",
+              slotMins: 60,
+              capacity: config.maxCapacity || 10,
+              communityId: community.id,
+              configurationId: config.id,
+            });
+          }
+
+          if (facilitiesToCreate.length > 0) {
+            await prisma.facility.createMany({
+              data: facilitiesToCreate,
+            });
+
+            console.log(
+              `Created ${facilitiesToCreate.length} actual facilities for ${config.facilityType}`
+            );
+          }
+        }
+      }
     }
 
     // Fetch the updated community with facilities
@@ -495,7 +1321,7 @@ router.get("/community/facilities", async (req, res) => {
   try {
     // Get the user's community ID from the authenticated user
     const user = await prisma.user.findUnique({
-      where: { id: req.user.userId },
+      where: { id: req.user.id },
       select: { communityId: true },
     });
 
@@ -566,7 +1392,7 @@ router.post("/community/facilities", async (req, res) => {
 
     // Get the user's community ID from the authenticated user
     const user = await prisma.user.findUnique({
-      where: { id: req.user.userId },
+      where: { id: req.user.id },
       select: { communityId: true },
     });
 
@@ -661,7 +1487,7 @@ router.get(
     try {
       // Get the user's community ID from the authenticated user
       const user = await prisma.user.findUnique({
-        where: { id: req.user.userId },
+        where: { id: req.user.id },
         select: { communityId: true },
       });
 
@@ -772,6 +1598,14 @@ router.patch(
         });
       }
 
+      console.log("Updating facility configuration:", {
+        facilityType: facilityTypeEnum,
+        enabled: facilityData.enabled,
+        quantity: facilityData.quantity,
+        maxCapacity: facilityData.maxCapacity,
+        operatingHours: facilityData.operatingHours,
+      });
+
       // Update or create facility configuration
       const facility = await prisma.facilityConfiguration.upsert({
         where: {
@@ -808,6 +1642,13 @@ router.patch(
         },
       });
 
+      console.log("Facility configuration updated:", {
+        id: facility.id,
+        facilityType: facility.facilityType,
+        enabled: facility.enabled,
+        quantity: facility.quantity,
+      });
+
       // If facility is enabled, ensure actual facility records exist
       if (facilityData.enabled) {
         const existingFacilities = await prisma.facility.findMany({
@@ -817,22 +1658,52 @@ router.patch(
           },
         });
 
+        // Update existing facilities with new configuration data
+        if (existingFacilities.length > 0) {
+          const operatingHours = facilityData.operatingHours || "09:00-21:00";
+          const [openTime, closeTime] = operatingHours.split("-");
+
+          await prisma.facility.updateMany({
+            where: {
+              facilityType: facilityTypeEnum,
+              configurationId: facility.id,
+            },
+            data: {
+              open: openTime?.trim() || "09:00",
+              close: closeTime?.trim() || "21:00",
+              capacity: facilityData.maxCapacity || 10,
+            },
+          });
+        }
+
+        console.log(
+          "Existing facilities count:",
+          currentCount,
+          "Target count:",
+          targetCount
+        );
+
         // Create missing facilities if quantity increased
         const currentCount = existingFacilities.length;
         const targetCount = facilityData.quantity || 1;
 
         if (currentCount < targetCount) {
+          const operatingHours = facilityData.operatingHours || "09:00-21:00";
+          const [openTime, closeTime] = operatingHours.split("-");
+
           const facilitiesToCreate = [];
           for (let i = currentCount + 1; i <= targetCount; i++) {
             facilitiesToCreate.push({
               name: `${facilityTypeEnum
-                .replace("_", " ")
+                .replace(/_/g, " ")
                 .toLowerCase()
                 .replace(/\b\w/g, (l) => l.toUpperCase())} ${i}`,
               facilityType: facilityTypeEnum,
-              open: facilityData.operatingHours?.split("-")[0] || "09:00",
-              close: facilityData.operatingHours?.split("-")[1] || "21:00",
+              open: openTime?.trim() || "09:00",
+              close: closeTime?.trim() || "21:00",
               slotMins: 60,
+              capacity: facilityData.maxCapacity || 10,
+              communityId: community.id,
               configurationId: facility.id,
             });
           }
@@ -840,6 +1711,8 @@ router.patch(
           await prisma.facility.createMany({
             data: facilitiesToCreate,
           });
+
+          console.log(`Created ${facilitiesToCreate.length} new facilities`);
         } else if (currentCount > targetCount) {
           // Remove excess facilities
           const facilitiesToRemove = existingFacilities.slice(targetCount);
@@ -851,7 +1724,40 @@ router.patch(
             },
           });
         }
+
+        // If no existing facilities and we need to create them
+        if (currentCount === 0 && targetCount > 0) {
+          const operatingHours = facilityData.operatingHours || "09:00-21:00";
+          const [openTime, closeTime] = operatingHours.split("-");
+
+          const facilitiesToCreate = [];
+          for (let i = 1; i <= targetCount; i++) {
+            facilitiesToCreate.push({
+              name: `${facilityTypeEnum
+                .replace(/_/g, " ")
+                .toLowerCase()
+                .replace(/\b\w/g, (l) => l.toUpperCase())} ${i}`,
+              facilityType: facilityTypeEnum,
+              open: openTime?.trim() || "09:00",
+              close: closeTime?.trim() || "21:00",
+              slotMins: 60,
+              capacity: facilityData.maxCapacity || 10,
+              communityId: community.id,
+              configurationId: facility.id,
+            });
+          }
+
+          await prisma.facility.createMany({
+            data: facilitiesToCreate,
+          });
+
+          console.log(
+            `Created ${facilitiesToCreate.length} initial facilities`
+          );
+        }
       } else {
+        console.log("Facility disabled, removing all facility records");
+
         // If facility is disabled, remove all actual facility records
         await prisma.facility.deleteMany({
           where: {
@@ -971,6 +1877,96 @@ router.delete("/bookings/:id", async (req, res) => {
   } catch (err) {
     console.error("Error deleting booking:", err);
     res.status(500).json({ error: "Failed to delete booking" });
+  }
+});
+
+router.get("/gatekeepers", async (req, res) => {
+  try {
+    const { communityId } = req.query;
+    if (!communityId) {
+      return res
+        .status(400)
+        .json({ error: "communityId query parameter is required" });
+    }
+    const gatekeepers = await prisma.user.findMany({
+      where: { communityId, role: "GATEKEEPER" },
+      select: { id: true, name: true, email: true, status: true },
+    });
+    res.json(gatekeepers);
+  } catch (err) {
+    console.error("Error fetching gatekeepers:", err);
+    res.status(500).json({ error: "Failed to fetch gatekeepers" });
+  }
+});
+
+router.post("/gatekeeper-signup", async (req, res) => {
+  const { name, email, password, communityId } = req.body;
+
+  try {
+    if (!communityId) {
+      return res.status(400).json({
+        error: "Community selection is required.",
+      });
+    }
+    const community = await prisma.community.findUnique({
+      where: { id: communityId },
+    });
+    if (!community) {
+      return res.status(400).json({
+        error: "Selected community not found. Please select a valid community.",
+      });
+    }
+    const existingGatekeeper = await prisma.user.findUnique({
+      where: { email },
+    });
+    if (existingGatekeeper) {
+      return res
+        .status(400)
+        .json({ error: "Gatekeeper with this email exists" });
+    }
+    const gatekeeper = await prisma.user.create({
+      data: {
+        name,
+        email,
+        password,
+        role: "GATEKEEPER",
+        status: "APPROVED",
+        communityId: community.id,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        status: true,
+        communityId: true,
+      },
+    });
+    const jwttoken = jwt.sign(
+      { userId: gatekeeper.id },
+      process.env.JWT_SECRET
+    );
+    return res.status(201).json({ user: gatekeeper, jwttoken });
+  } catch (e) {
+    console.error("Error signing up gatekeeper:", e);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.delete("/gatekeepers/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const gatekeeper = await prisma.user.findUnique({
+      where: { id }
+    });
+    if (!gatekeeper) {
+      return res.status(404).json({ error: "Gatekeeper not found" });
+    }
+    await prisma.user.delete({ where: { id } });
+    res.json({ message: "Gatekeeper deleted" });
+  } catch (err) {
+    console.error("Error deleting gatekeeper:", err);
+    res.status(500).json({ error: "Failed to delete gatekeeper" });
   }
 });
 

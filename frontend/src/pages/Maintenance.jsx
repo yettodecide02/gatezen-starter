@@ -12,6 +12,7 @@ import {
 } from "react-icons/fi";
 import Toast from "../components/Toast";
 import axios from "axios";
+import { getToken, getUser } from "../lib/auth";
 
 const STATUS_LABEL = {
   submitted: "Submitted",
@@ -78,13 +79,13 @@ export default function Maintenance() {
 
   const user = useMemo(() => {
     try {
-      return (
-        JSON.parse(localStorage.getItem("user")) || { id: "u1", name: "Admin" }
-      );
+      return getUser() || { id: "u1", name: "Admin", communityId: null };
     } catch {
-      return { id: "u1", name: "Admin" };
+      return { id: "u1", name: "Admin", communityId: null };
     }
   }, []);
+
+  const token = getToken();
 
   function showToast(text) {
     clearTimeout(toastTimer.current);
@@ -100,7 +101,7 @@ export default function Maintenance() {
           `/resident/maintenance`,
         {
           headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}` || "",
+            Authorization: `Bearer ${token}` || "",
           },
           params: {
             communityId: user.communityId,
@@ -166,21 +167,46 @@ export default function Maintenance() {
 
   async function submitTicket(e) {
     e.preventDefault();
+
+    // Validate required fields
+    if (!user.id) {
+      showToast("Error: User not authenticated");
+      return;
+    }
+
+    if (!user.communityId) {
+      showToast("Error: Community information missing");
+      return;
+    }
+
+    if (!title.trim()) {
+      showToast("Error: Title is required");
+      return;
+    }
+
+    if (!category) {
+      showToast("Error: Category is required");
+      return;
+    }
+
     try {
       const payload = {
         userId: user.id,
         communityId: user.communityId,
-        title,
+        title: title.trim(),
         category,
-        description: desc,
+        description: desc.trim(),
         images: imgUrl ? [imgUrl] : [],
       };
+
+      console.log("Submitting maintenance ticket:", payload); // Debug log
+
       const response = await axios.post(
         `${import.meta.env.VITE_API_URL}/resident/maintenance`,
         payload,
         {
           headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`,
+            Authorization: `Bearer ${token}`,
           },
         }
       );
@@ -196,7 +222,9 @@ export default function Maintenance() {
       showToast("Ticket submitted");
     } catch (error) {
       console.error("Error submitting ticket:", error);
-      showToast("Error submitting ticket");
+      const errorMessage =
+        error.response?.data?.error || "Error submitting ticket";
+      showToast(errorMessage);
     }
   }
 
@@ -214,7 +242,7 @@ export default function Maintenance() {
         },
         {
           headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`,
+            Authorization: `Bearer ${token}`,
           },
         }
       );
@@ -252,7 +280,7 @@ export default function Maintenance() {
         },
         {
           headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`,
+            Authorization: `Bearer ${token}`,
           },
         }
       );
@@ -282,7 +310,7 @@ export default function Maintenance() {
         },
         {
           headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`,
+            Authorization: `Bearer ${token}`,
           },
         }
       );

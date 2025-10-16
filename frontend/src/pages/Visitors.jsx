@@ -11,7 +11,8 @@ import {
   FiCheckCircle,
   FiActivity,
 } from "react-icons/fi";
-import Toast from "../components/Toast";
+import Toast, { ToastContainer, useToast } from "../components/Toast";
+import { getToken, getUser } from "../lib/auth";
 
 function isoNowLocalDate() {
   const d = new Date();
@@ -26,16 +27,7 @@ function isoNowLocalTime() {
 
 export default function Visitors() {
   const user = useMemo(() => {
-    try {
-      return (
-        JSON.parse(localStorage.getItem("user")) || {
-          id: "u1",
-          role: "resident",
-        }
-      );
-    } catch {
-      return { id: "u1", role: "resident" };
-    }
+    return getUser() || null;
   }, []);
 
   const [list, setList] = useState([]);
@@ -44,36 +36,47 @@ export default function Visitors() {
 
   // pre-auth form
   const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [type, setType] = useState("GUEST"); // Added visitor type field
-  const [expectedDate, setExpectedDate] = useState(isoNowLocalDate());
-  const [expectedTime, setExpectedTime] = useState(isoNowLocalTime());
-  const [purpose, setPurpose] = useState("");
-  const [vehicle, setVehicle] = useState("");
-  const [notes, setNotes] = useState("");
+  const [contact, setContact] = useState("");
+  const [visitorType, setVisitorType] = useState("GUEST"); // Match backend field name
+  const [visitDate, setVisitDate] = useState(isoNowLocalDate());
+  const [visitTime, setVisitTime] = useState(isoNowLocalTime());
+  const [vehicleNo, setVehicleNo] = useState(""); // Match backend field name
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [toastText, setToastText] = useState("");
-  const [toastVisible, setToastVisible] = useState(false);
-  const toastTimeoutRef = useRef(null);
+  const token = getToken();
 
-  // Toast utility functions
-  const showToast = (text) => {
-    setToastText(text);
-    setToastVisible(true);
+  // Toast management using custom hook
+  const { toasts, addToast, removeToast } = useToast();
 
-    if (toastTimeoutRef.current) {
-      clearTimeout(toastTimeoutRef.current);
+  // Check authentication
+  useEffect(() => {
+
+    if (!user || !token) {
+      addToast(
+        "error",
+        "Authentication Required",
+        "Please log in to access visitor management."
+      );
+      return;
     }
-    toastTimeoutRef.current = setTimeout(() => {
-      setToastVisible(false);
-    }, 3000);
-  };
+    if (!user.communityId || !user.id) {
+      addToast(
+        "error",
+        "Profile Incomplete",
+        "User profile incomplete. Please contact administrator."
+      );
+      return;
+    }
+  }, [user, token, addToast]);
 
   async function load() {
-    if (!user.communityId || !user.id) {
-      showToast("User information missing. Please log in again.");
+    if (!user || !user.communityId || !user.id) {
+      addToast(
+        "error",
+        "Authentication Error",
+        "User information missing. Please log in again."
+      );
       return;
     }
 
@@ -89,16 +92,21 @@ export default function Visitors() {
         `${import.meta.env.VITE_API_URL}/resident/visitors?${qs.toString()}`,
         {
           headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`,
+            Authorization: `Bearer ${token}`,
           },
         }
       );
 
+      // Backend returns visitors directly, not wrapped in data property
       const visitors = Array.isArray(res.data) ? res.data : [];
       setList(visitors);
     } catch (error) {
       console.error("Error loading visitors:", error);
-      showToast("Error loading visitors. Please try again.");
+      addToast(
+        "error",
+        "Loading Failed",
+        "Error loading visitors. Please try again."
+      );
       setList([]);
     } finally {
       setLoading(false);
@@ -118,9 +126,6 @@ export default function Visitors() {
     return () => {
       es.removeEventListener("visitor", refresh);
       es.close();
-      if (toastTimeoutRef.current) {
-        clearTimeout(toastTimeoutRef.current);
-      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -128,83 +133,128 @@ export default function Visitors() {
   async function preAuthorize(e) {
     e.preventDefault();
     setMsg("");
-    if (!name || !purpose) {
-      showToast("Please fill name and purpose.");
+    if (!name) {
+      addToast("error", "Validation Error", "Please fill visitor name.");
       return;
     }
-    if (type === "GUEST" && !email) {
-      showToast("Email is required for GUEST visitor type.");
+    if (visitorType === "GUEST" && !contact) {
+      addToast(
+        "error",
+        "Validation Error",
+        "Email is required for GUEST visitor type."
+      );
       return;
     }
-    if (!user.communityId) {
-      showToast("User community information missing. Please log in again.");
+    if (!user || !user.communityId) {
+      addToast(
+        "error",
+        "Authentication Error",
+        "User community information missing. Please log in again."
+      );
       return;
     }
     if (!user.id) {
-      showToast("User ID missing. Please log in again.");
+      addToast(
+        "error",
+        "Authentication Error",
+        "User ID missing. Please log in again."
+      );
       return;
     }
     try {
       setSubmitting(true);
       // Create date in local timezone first, then convert to ISO
-      const localDateTime = `${expectedDate}T${expectedTime}:00`;
-      const expectedAt = new Date(localDateTime).toISOString();
+      const localDateTime = `${visitDate}T${visitTime}:00`;
+      const visitDateTime = new Date(localDateTime).toISOString();
 
-      console.log("Date components:", {
-        expectedDate,
-        expectedTime,
-        localDateTime,
-        expectedAt,
-      });
 
       const requestData = {
         name: name.trim(),
-        email: email.trim(),
-        type: type || "GUEST",
-        expectedAt,
-        purpose: purpose.trim(),
-        vehicle: vehicle?.trim() || null,
-        notes: notes?.trim() || null,
+        contact: contact.trim(),
+        visitorType: visitorType || "GUEST",
+        visitDate: visitDateTime,
+        vehicleNo: vehicleNo?.trim() || null,
         communityId: user.communityId,
-        residentId: user.id, // Explicitly include residentId
+        userId: user.id, // Match backend expectation
       };
 
-      console.log("Creating visitor with data:", requestData);
 
       await axios.post(
         `${import.meta.env.VITE_API_URL}/resident/visitor-creation`,
         requestData,
         {
           headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`,
+            Authorization: `Bearer ${token}`,
           },
         }
       );
       setName("");
-      setEmail("");
-      setType("GUEST");
-      setPurpose("");
-      setVehicle("");
-      setNotes("");
-      showToast("Pre-authorization submitted successfully!");
+      setContact("");
+      setVisitorType("GUEST");
+      setVehicleNo("");
+      addToast(
+        "success",
+        "Success",
+        "Pre-authorization submitted successfully!"
+      );
       load();
     } catch (error) {
       console.error("Error creating visitor:", error);
       console.error("Error response:", error.response?.data);
       console.error("Error status:", error.response?.status);
       console.error("User data:", user);
-      console.error(
-        "Token:",
-        localStorage.getItem("token") ? "present" : "missing"
-      );
+      console.error("Token:", token ? "present" : "missing");
 
       const errorMessage =
         error.response?.data?.error ||
         "Error creating visitor. Please try again.";
-      showToast(errorMessage);
+      addToast("error", "Creation Failed", errorMessage);
     } finally {
       setSubmitting(false);
     }
+  }
+
+  // Show loading/error state if user is not available
+  if (!user || !token) {
+    return (
+      <div className="modern-content">
+        <div className="section-header">
+          <div className="section-left">
+            <div className="section-icon">
+              <FiUsers />
+            </div>
+            <h3 style={{ margin: 0 }}>Visitor & Access Management</h3>
+          </div>
+        </div>
+        <div className="modern-card">
+          <div className="empty">
+            <p>Please log in to access visitor management.</p>
+          </div>
+        </div>
+        <ToastContainer toasts={toasts} onClose={removeToast} />
+      </div>
+    );
+  }
+
+  if (!user.communityId || !user.id) {
+    return (
+      <div className="modern-content">
+        <div className="section-header">
+          <div className="section-left">
+            <div className="section-icon">
+              <FiUsers />
+            </div>
+            <h3 style={{ margin: 0 }}>Visitor & Access Management</h3>
+          </div>
+        </div>
+        <div className="modern-card">
+          <div className="empty">
+            <p>User profile incomplete. Please contact administrator.</p>
+          </div>
+        </div>
+        <ToastContainer toasts={toasts} onClose={removeToast} />
+      </div>
+    );
   }
 
   return (
@@ -240,7 +290,7 @@ export default function Visitors() {
               placeholder="e.g., John Doe"
             />
 
-            <label className="label">Email</label>
+            <label className="label">Email/Contact</label>
             <div className="row" style={{ gap: 8 }}>
               <div
                 className="input"
@@ -250,10 +300,10 @@ export default function Visitors() {
                 <input
                   className="input"
                   style={{ border: "none", boxShadow: "none", padding: 0 }}
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="visitor@example.com"
-                  type="email"
+                  value={contact}
+                  onChange={(e) => setContact(e.target.value)}
+                  placeholder="visitor@example.com or +91-9876543210"
+                  type="text"
                 />
               </div>
             </div>
@@ -261,8 +311,8 @@ export default function Visitors() {
             <label className="label">Visitor Type</label>
             <select
               className="input"
-              value={type}
-              onChange={(e) => setType(e.target.value)}
+              value={visitorType}
+              onChange={(e) => setVisitorType(e.target.value)}
             >
               <option value="GUEST">Guest</option>
               <option value="DELIVERY">Delivery</option>
@@ -274,32 +324,15 @@ export default function Visitors() {
               <input
                 type="date"
                 className="input"
-                value={expectedDate}
-                onChange={(e) => setExpectedDate(e.target.value)}
+                value={visitDate}
+                onChange={(e) => setVisitDate(e.target.value)}
               />
               <input
                 type="time"
                 className="input"
-                value={expectedTime}
-                onChange={(e) => setExpectedTime(e.target.value)}
+                value={visitTime}
+                onChange={(e) => setVisitTime(e.target.value)}
               />
-            </div>
-
-            <label className="label">Purpose</label>
-            <div className="row" style={{ gap: 8 }}>
-              <div
-                className="input"
-                style={{ display: "flex", alignItems: "center", gap: 8 }}
-              >
-                <FiClipboard />
-                <input
-                  className="input"
-                  style={{ border: "none", boxShadow: "none", padding: 0 }}
-                  value={purpose}
-                  onChange={(e) => setPurpose(e.target.value)}
-                  placeholder="Delivery / Guest / Maintenance"
-                />
-              </div>
             </div>
 
             <label className="label">Vehicle (optional)</label>
@@ -312,20 +345,12 @@ export default function Visitors() {
                 <input
                   className="input"
                   style={{ border: "none", boxShadow: "none", padding: 0 }}
-                  value={vehicle}
-                  onChange={(e) => setVehicle(e.target.value)}
+                  value={vehicleNo}
+                  onChange={(e) => setVehicleNo(e.target.value)}
                   placeholder="KA01 AB 1234"
                 />
               </div>
             </div>
-
-            <label className="label">Notes (optional)</label>
-            <input
-              className="input"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Any extra instructions for security"
-            />
 
             <button className="btn primary" type="submit" disabled={submitting}>
               <FiCheckCircle /> {submitting ? "Submitting..." : "Submit"}
@@ -385,21 +410,20 @@ export default function Visitors() {
                 <div key={v.id} className="list-item">
                   <div className="grow">
                     <div className="title">
-                      {v.name} — <span className="sub">{v.email}</span>
+                      {v.name} — <span className="sub">{v.contact}</span>
                     </div>
                     <div className="sub">
                       <FiMapPin style={{ verticalAlign: "-2px" }} />{" "}
-                      {new Date(v.expectedAt).toLocaleString()} • {v.purpose}
-                      {v.vehicle ? ` • ${v.vehicle}` : ""}
+                      {new Date(v.visitDate).toLocaleString()}
+                      {v.vehicleNo ? ` • Vehicle: ${v.vehicleNo}` : ""}
                     </div>
                     <div className="sub">
                       Type:{" "}
-                      {v.type
+                      {v.visitorType
                         ?.replace("_", " ")
                         .toLowerCase()
                         .replace(/\b\w/g, (l) => l.toUpperCase()) || "Guest"}
                     </div>
-                    {v.notes && <div className="sub">{v.notes}</div>}
                   </div>
                   <div className="chip">
                     <FiActivity />
@@ -419,7 +443,7 @@ export default function Visitors() {
         </div>
       </div>
 
-      {toastVisible && <Toast text={toastText} />}
+      <ToastContainer toasts={toasts} onClose={removeToast} />
     </div>
   );
 }

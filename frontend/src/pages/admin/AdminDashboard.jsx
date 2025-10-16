@@ -13,7 +13,7 @@ import {
   FiXCircle,
   FiInfo,
 } from "react-icons/fi";
-import { getUser } from "../../lib/auth";
+import { getToken, getUser } from "../../lib/auth";
 
 // Toast Component
 function Toast({ toast, onClose }) {
@@ -79,7 +79,7 @@ function Stat({ icon, title, value, hint, className = "" }) {
 }
 
 const url = import.meta.env.VITE_API_URL || "http://localhost:5000";
-const token = localStorage.getItem("token") || "";
+const token = getToken() || "";
 
 function AnnouncementModal({ isOpen, onClose, onSubmit }) {
   const [title, setTitle] = useState("");

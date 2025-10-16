@@ -1,13 +1,21 @@
-// frontend/src/lib/auth.js
 const KEY = 'user';
+import Cookies from "js-cookie";
 
 export function setUser(user) {
-  localStorage.setItem(KEY, JSON.stringify(user));
+  Cookies.set(KEY, JSON.stringify(user));
+}
+
+export function setToken(token) {
+  Cookies.set('token', token);
+}
+
+export function getToken() {
+  return Cookies.get('token') || null;
 }
 
 export function getUser() {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = Cookies.get(KEY);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -15,8 +23,8 @@ export function getUser() {
 }
 
 export function clearUser() {
-  localStorage.removeItem(KEY);
-  localStorage.removeItem('token');
+  Cookies.remove(KEY);
+  Cookies.remove('token');
 }
 
 export function isAuthed() {

@@ -8,61 +8,11 @@ import {
   FiX,
   FiMail,
   FiCalendar,
-  FiCheckCircle,
-  FiXCircle,
   FiClock,
-  FiInfo,
+  FiHome,
 } from "react-icons/fi";
-import { getUser } from "../../lib/auth";
-
-// Toast Components (reusing from AdminDashboard)
-function Toast({ toast, onClose }) {
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      onClose(toast.id);
-    }, 3000);
-
-    return () => clearTimeout(timer);
-  }, [toast.id, onClose]);
-
-  const getIcon = () => {
-    switch (toast.type) {
-      case "success":
-        return <FiCheckCircle />;
-      case "error":
-        return <FiXCircle />;
-      case "info":
-        return <FiInfo />;
-      default:
-        return <FiInfo />;
-    }
-  };
-
-  return (
-    <div className={`toast ${toast.type}`}>
-      <div className="toast-icon">{getIcon()}</div>
-      <div className="toast-content">
-        <div className="toast-title">{toast.title}</div>
-        <div className="toast-message">{toast.message}</div>
-      </div>
-      <button className="toast-close" onClick={() => onClose(toast.id)}>
-        <FiX />
-      </button>
-    </div>
-  );
-}
-
-function ToastContainer({ toasts, onClose }) {
-  if (toasts.length === 0) return null;
-
-  return (
-    <div className="toast-container">
-      {toasts.map((toast) => (
-        <Toast key={toast.id} toast={toast} onClose={onClose} />
-      ))}
-    </div>
-  );
-}
+import { getToken, getUser } from "../../lib/auth";
+import { ToastContainer, useToast } from "../../components/Toast";
 
 function ResidentCard({ resident, onAction, showActions = false }) {
   const getStatusBadge = (status) => {
@@ -120,6 +70,15 @@ function ResidentCard({ resident, onAction, showActions = false }) {
             <FiMail style={{ display: "inline", marginRight: "4px" }} />
             {resident.email}
           </div>
+          {(resident.block || resident.unit) && (
+            <div className="list-sub">
+              <FiHome style={{ display: "inline", marginRight: "4px" }} />
+              {resident.block && `Block ${resident.block.name}`}
+              {resident.block && resident.unit && " - "}
+              {resident.unit && `Unit ${resident.unit.number}`}
+              {!resident.block && !resident.unit && "No block/unit assigned"}
+            </div>
+          )}
           <div className="list-sub">
             <FiCalendar style={{ display: "inline", marginRight: "4px" }} />
             Joined: {new Date(resident.createdAt).toLocaleDateString()}
@@ -180,20 +139,12 @@ export default function Residents() {
   const [residents, setResidents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("all");
-  const [toasts, setToasts] = useState([]);
+
+  // Toast management using custom hook
+  const { toasts, addToast, removeToast } = useToast();
 
   const url = import.meta.env.VITE_API_URL || "http://localhost:5000";
-  const token = localStorage.getItem("token") || "";
-
-  const addToast = (type, title, message) => {
-    const id = Date.now();
-    const newToast = { id, type, title, message };
-    setToasts((prev) => [...prev, newToast]);
-  };
-
-  const removeToast = (id) => {
-    setToasts((prev) => prev.filter((toast) => toast.id !== id));
-  };
+  const token = getToken() || "";
 
   useEffect(() => {
     fetchResidents();

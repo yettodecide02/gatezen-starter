@@ -16,7 +16,7 @@ import {
   FiMoreVertical,
 } from "react-icons/fi";
 import axios from "axios";
-import { getUser } from "../../lib/auth";
+import { getToken, getUser } from "../../lib/auth";
 
 const url = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
@@ -81,7 +81,7 @@ export default function Bookings() {
   const [toasts, setToasts] = useState([]);
   const [facilities, setFacilities] = useState([]);
 
-  const token = localStorage.getItem("token");
+  const token = getToken();
 
   // Add toast notification
   const addToast = (type, title, message) => {

@@ -12,7 +12,8 @@ import {
   FiSave,
   FiMapPin,
 } from "react-icons/fi";
-import { getUser } from "../../lib/auth";
+import { getToken, getUser } from "../../lib/auth";
+import { ToastContainer, useToast } from "../../components/Toast";
 
 const FACILITY_TYPES = [
   { id: "swimming_pool", name: "Swimming Pool", icon: "🏊" },
@@ -39,7 +40,7 @@ const PRICE_TYPES = [
 // API Configuration
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 const getAuthHeaders = () => {
-  const token = localStorage.getItem("token") || "";
+  const token = getToken() || "";
   return {
     "Content-Type": "application/json",
     Authorization: `Bearer ${token}`,
@@ -55,8 +56,9 @@ export default function Community() {
 
   const [facilities, setFacilities] = useState({});
   const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState("");
-  const [error, setError] = useState("");
+
+  // Toast management using custom hook
+  const { toasts, addToast, removeToast } = useToast();
 
   // Initialize facilities object and load existing community data
   useEffect(() => {
@@ -169,8 +171,6 @@ export default function Community() {
 
   const handleSave = async () => {
     setLoading(true);
-    setError("");
-    setSuccess("");
 
     try {
       // Prepare data for API
@@ -195,20 +195,25 @@ export default function Community() {
       });
 
       if (response.data.success) {
-        setSuccess(
+        addToast(
+          "success",
+          "Configuration Saved",
           response.data.message || "Community configuration saved successfully!"
         );
-        setTimeout(() => setSuccess(""), 3000);
 
         // Reload the community data to reflect any server-side changes
         await loadCommunityData();
       } else {
-        setError(
+        addToast(
+          "error",
+          "Save Failed",
           response.data.message || "Failed to save community configuration"
         );
       }
     } catch (err) {
-      setError(
+      addToast(
+        "error",
+        "Save Error",
         err.response?.data?.message ||
           err.message ||
           "Failed to save community configuration"
@@ -243,27 +248,6 @@ export default function Community() {
           {loading ? "Saving..." : "Save Configuration"}
         </button>
       </div>
-
-      {/* Messages */}
-      {error && (
-        <div className="auth-error" style={{ marginBottom: "24px" }}>
-          {error}
-        </div>
-      )}
-
-      {success && (
-        <div
-          className="auth-error"
-          style={{
-            marginBottom: "24px",
-            background: "#d1fae5",
-            color: "#065f46",
-            borderColor: "#a7f3d0",
-          }}
-        >
-          {success}
-        </div>
-      )}
 
       {/* Community Details */}
       <div className="modern-card" style={{ marginBottom: "32px" }}>
@@ -632,6 +616,9 @@ export default function Community() {
           })}
         </div>
       </div>
+
+      {/* Toast Container */}
+      <ToastContainer toasts={toasts} onClose={removeToast} />
     </div>
   );
 }

@@ -10,7 +10,8 @@ import {
   FiAlertCircle,
 } from "react-icons/fi";
 import axios from "axios";
-import { getUser } from "../../lib/auth";
+import { getToken, getUser } from "../../lib/auth";
+import { ToastContainer, useToast } from "../../components/Toast";
 
 const url = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
@@ -38,18 +39,23 @@ const STATUS_CONFIG = {
 export default function Maintenance() {
   const [maintenance, setMaintenance] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const [filterStatus, setFilterStatus] = useState("ALL");
   const [updateLoading, setUpdateLoading] = useState({});
 
-  const token = localStorage.getItem("token");
+  // Toast management using custom hook
+  const { toasts, addToast, removeToast } = useToast();
+
+  const token = getToken();
 
   // Fetch all maintenance requests
   const fetchMaintenance = async () => {
     const user = getUser();
     if (!user || !user.communityId) {
-      setError("User not authenticated or missing community information");
+      addToast(
+        "error",
+        "Authentication Error",
+        "User not authenticated or missing community information"
+      );
       setLoading(false);
       return;
     }
@@ -65,7 +71,7 @@ export default function Maintenance() {
       setMaintenance(response.data.maintenance || []);
     } catch (error) {
       console.error("Error fetching maintenance requests:", error);
-      setError("Failed to load maintenance requests");
+      addToast("error", "Load Failed", "Failed to load maintenance requests");
     } finally {
       setLoading(false);
     }
@@ -96,13 +102,16 @@ export default function Maintenance() {
         )
       );
 
-      setSuccess(
+      addToast(
+        "success",
+        "Status Updated",
         `Maintenance request updated to ${STATUS_CONFIG[newStatus].label}`
       );
-      setTimeout(() => setSuccess(""), 3000);
     } catch (error) {
       console.error("Error updating maintenance request:", error);
-      setError(
+      addToast(
+        "error",
+        "Update Failed",
         error.response?.data?.error || "Failed to update maintenance request"
       );
     } finally {
@@ -121,7 +130,7 @@ export default function Maintenance() {
     SUBMITTED: maintenance.filter((item) => item.status === "SUBMITTED").length,
     IN_PROGRESS: maintenance.filter((item) => item.status === "IN_PROGRESS")
       .length,
-    RESOLVED: maintenance.filter((item) => item.status === "RESOLVED").length
+    RESOLVED: maintenance.filter((item) => item.status === "RESOLVED").length,
   };
 
   // Format date
@@ -154,13 +163,6 @@ export default function Maintenance() {
           </div>
         </div>
       </div>
-
-      {/* Error/Success Messages */}
-      {error && <div className="auth-error maintenance-spacing">{error}</div>}
-
-      {success && (
-        <div className="auth-error maintenance-success">{success}</div>
-      )}
 
       {/* Status Filter Pills */}
       <div className="modern-card maintenance-spacing">
@@ -327,6 +329,9 @@ export default function Maintenance() {
           )}
         </div>
       )}
+
+      {/* Toast Container */}
+      <ToastContainer toasts={toasts} onClose={removeToast} />
     </div>
   );
 }

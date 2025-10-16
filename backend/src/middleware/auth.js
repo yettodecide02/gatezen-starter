@@ -19,6 +19,7 @@ export const authMiddleware =  (req, res, next) => {
     if(!user) {
       return res.status(401).json({ error: "Unauthorized" });
     }
+    
     req.user = user;
     next();
   });
@@ -26,9 +27,10 @@ export const authMiddleware =  (req, res, next) => {
 
 const requestCount = {};
 const limitTime = 600000; // 10 minutes
-const maxRequests = 100;
+const maxRequests = 10000;
 
 export const limiter = (req, res, next) => {
+  
   const ip = req.ip;
   const currentTime = Date.now();
 

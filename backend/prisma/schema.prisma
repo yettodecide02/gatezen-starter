@@ -1,3 +1,9 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -14,15 +20,47 @@ model Community {
   address          String?
   createdAt        DateTime                @default(now())
   updatedAt        DateTime                @updatedAt
-  announcements    Announcements[]
+  noOfBlocks       Int?
+  noOfUnits        Int?
+  blocks           Block[]
+  units            Unit[]
+  announcements    Announcement[]
   bookings         Booking[]
-  events           Event[]
   actualFacilities Facility[]              @relation("CommunityFacilities")
   facilityConfigs  FacilityConfiguration[] @relation("FacilityConfigs")
-  payments         Payments[]
   tickets          Ticket[]
   users            User[]
-  visitors         Visitor[]  
+  visitors         Visitor[]
+  payments         Payment[]
+}
+
+model Block {
+  id          String    @id @default(uuid())
+  name        String
+  communityId String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  units       Unit[]
+
+  @@index([communityId])
+  @@index([communityId, name])
+}
+
+model Unit {
+  id        String   @id @default(uuid())
+  number    String
+  blockId   String
+  communityId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  block     Block    @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  residents User[]
+
+  @@index([blockId])
+  @@index([communityId])
+  @@index([communityId, number])
 }
 
 model User {
@@ -33,15 +71,107 @@ model User {
   role        UserRole   @default(RESIDENT)
   status      UserStatus @default(PENDING)
   communityId String
+  unitId      String?
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
   bookings    Booking[]
   comments    Comment[]
-  payments    Payments[]
-  rsvp        RSVP[]
   tickets     Ticket[]
+  payments    Payment[]
   community   Community  @relation(fields: [communityId], references: [id], onDelete: Cascade)
-  visitors    Visitor[]  @relation("UserVisitors")  // <-- addeeeeed
+  unit        Unit?      @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  visitors    Visitor[]  @relation("UserVisitors")
+
+  @@index([communityId])
+  @@index([communityId, role])
+  @@index([communityId, status])
+  @@index([unitId])
+}
+
+model Announcement {
+  id          String    @id @default(uuid())
+  title       String
+  content     String
+  communityId String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([communityId])
+  @@index([communityId, createdAt])
+}
+
+model Visitor {
+  id          String    @id @default(uuid())
+  name        String
+  contact     String
+  vehicleNo   String?
+  visitorType VisitorType @default(GUEST)
+  visitDate   DateTime
+  checkInAt   DateTime?
+  checkOutAt  DateTime?
+  userId      String?
+  communityId String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  user        User?     @relation("UserVisitors", fields: [userId], references: [id], onDelete: SetNull)
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([communityId])
+  @@index([communityId, visitDate])
+  @@index([userId])
+  @@index([contact])
+  @@index([vehicleNo])
+}
+
+model Ticket {
+  id          String       @id @default(uuid())
+  title       String
+  category    String
+  description String?
+  status      TicketStatus @default(SUBMITTED)
+  priority    TicketPriority @default(LOW)
+  userId      String
+  communityId String
+  comments    Comment[]
+  history     TicketHistory[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community   Community    @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([communityId])
+  @@index([userId])
+  @@index([communityId, status])
+  @@index([communityId, priority])
+  @@index([communityId, category])
+  @@index([createdAt])
+}
+
+model TicketHistory {
+  id        String       @id @default(uuid())
+  status    TicketStatus
+  ticketId  String
+  changedAt DateTime     @default(now())
+  ticket    Ticket       @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+  @@index([ticketId, changedAt])
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  text      String
+  ticketId  String
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+  @@index([userId])
+  @@index([ticketId, createdAt])
 }
 
 model FacilityConfiguration {
@@ -79,50 +209,10 @@ model Facility {
   bookings        Booking[]
   community       Community              @relation("CommunityFacilities", fields: [communityId], references: [id], onDelete: Cascade)
   configuration   FacilityConfiguration? @relation(fields: [configurationId], references: [id])
-}
 
-model Ticket {
-  id          String       @id @default(uuid())
-  title       String
-  category    String
-  description String?
-  status      TicketStatus @default(SUBMITTED)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  userId      String
-  communityId String
-  comments    Comment[]
-  history     History[]
-  images      Image[]
-  community   Community    @relation(fields: [communityId], references: [id], onDelete: Cascade)
-  user        User         @relation(fields: [userId], references: [id])
-}
-
-model Comment {
-  id        String   @id @default(uuid())
-  text      String
-  createdAt DateTime @default(now())
-  userId    String
-  ticketId  String
-  ticket    Ticket   @relation(fields: [ticketId], references: [id])
-  user      User     @relation(fields: [userId], references: [id])
-}
-
-model Image {
-  id        String   @id @default(uuid())
-  url       String
-  createdAt DateTime @default(now())
-  ticketId  String
-  ticket    Ticket   @relation(fields: [ticketId], references: [id])
-}
-
-model History {
-  id       String       @id @default(uuid())
-  status   TicketStatus
-  note     String?
-  at       DateTime     @default(now())
-  ticketId String
-  ticket   Ticket       @relation(fields: [ticketId], references: [id])
+  @@index([communityId])
+  @@index([communityId, facilityType])
+  @@index([configurationId])
 }
 
 model Booking {
@@ -143,59 +233,37 @@ model Booking {
 
   @@index([facilityId, startsAt])
   @@index([communityId, startsAt])
+  @@index([userId])
+  @@index([communityId, status])
+  @@index([startsAt, endsAt])
 }
 
-model Event {
-  id          String    @id @default(uuid())
-  title       String
-  description String?
-  location    String
-  startsAt    DateTime
-  endsAt      DateTime
-  communityId String
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
-  rsvps       RSVP[]
-}
-
-model RSVP {
-  id      String @id @default(uuid())
-  userId  String
-  eventId String
-  event   Event  @relation(fields: [eventId], references: [id])
-  user    User   @relation(fields: [userId], references: [id])
-
-  @@unique([userId, eventId])
-}
-
-model Announcements {
-  id          String    @id @default(uuid())
-  title       String
-  content     String
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  userId      String
-  communityId String
-  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
-}
-
-model Payments {
-  id          String    @id @default(uuid())
+model Payment {
+  id          String        @id @default(uuid())
   amount      Float
-  method      String
-  createdAt   DateTime  @default(now())
+  currency    String        @default("INR")
+  description String
+  method      String?
+  status      PaymentStatus @default(PENDING)
+  dueDate     DateTime?
+  paidAt      DateTime?
   userId      String
   communityId String
-  updatedAt   DateTime  @updatedAt
-  status      String
-  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
-  user        User      @relation(fields: [userId], references: [id])
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community   Community     @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([communityId])
+  @@index([communityId, status])
+  @@index([status, dueDate])
+  @@index([createdAt])
 }
 
 enum UserRole {
-  ADMIN
   RESIDENT
+  ADMIN
   GATEKEEPER
   STAFF
 }
@@ -206,22 +274,31 @@ enum UserStatus {
   REJECTED
 }
 
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
 enum TicketStatus {
   SUBMITTED
   IN_PROGRESS
   RESOLVED
-  CANCELLED
+  CLOSED
 }
 
-enum BookingStatus {
-  CONFIRMED
-  CANCELLED
+enum VisitorType {
+  GUEST
+  DELIVERY
+  CAB_AUTO
 }
 
-enum PaymentStatus {
-  PENDING
-  COMPLETED
-  FAILED
+enum PriceType {
+  PER_HOUR
+  PER_DAY
+  PER_WEEK
+  PER_MONTH
+  ONE_TIME
 }
 
 enum FacilityType {
@@ -238,45 +315,14 @@ enum FacilityType {
   JOGGING_TRACK
 }
 
-enum PriceType {
-  PER_HOUR
-  PER_DAY
-  PER_WEEK
-  PER_MONTH
-  ONE_TIME
-}
-
-enum VisitorType {
-  GUEST
-  DELIVERY
-  CAB_AUTO
-}
-
-enum VisitorStatus {
-  PENDING
-  APPROVED
-  CHECKED_IN
-  CHECKED_OUT
+enum BookingStatus {
+  CONFIRMED
   CANCELLED
 }
 
-model Visitor {
-  id           String        @id @default(uuid())
-  name         String
-  email        String?
-  type         VisitorType
-  expectedAt   DateTime
-  purpose      String?
-  vehicle      String?
-  notes        String?
-  status       VisitorStatus @default(PENDING)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-
-  residentId   String
-  communityId  String
-  resident     User          @relation("UserVisitors", fields: [residentId], references: [id], onDelete: Cascade)
-  community    Community     @relation(fields: [communityId], references: [id], onDelete: Cascade)
-
-  @@index([communityId, expectedAt])
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  OVERDUE
 }

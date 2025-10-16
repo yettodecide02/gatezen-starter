@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { FiMail, FiLock, FiEye, FiEyeOff, FiLogIn } from "react-icons/fi";
 import axios from "axios";
-import { isAdmin, isAuthed, setUser } from "../lib/auth";
+import { isAdmin, isAuthed, setToken, setUser } from "../lib/auth";
 import GoogleSignin from "../components/GoogleSignin";
 import ReCAPTCHA from "react-google-recaptcha";
 
@@ -44,7 +44,7 @@ export default function Login() {
         return;
       }
 
-      localStorage.setItem("token", res.data.jwttoken);
+      setToken(res.data.jwttoken);
       if (res.data.user) setUser(res.data.user);
 
       // Check user status

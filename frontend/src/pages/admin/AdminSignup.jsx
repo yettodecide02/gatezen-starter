@@ -9,7 +9,7 @@ import {
   FiEye,
   FiEyeOff,
 } from "react-icons/fi";
-import { setUser } from "../../lib/auth";
+import { setToken, setUser } from "../../lib/auth";
 import axios from "axios";
 import ReCAPTCHA from "react-google-recaptcha";
 
@@ -85,9 +85,8 @@ function AdminSignup() {
 
       if (res.data.user && res.data.jwttoken) {
         // Store user data and token
-        setUser(res.data.user, res.data.jwttoken);
-        localStorage.setItem("token", res.data.jwttoken);
-        localStorage.setItem("user", JSON.stringify(res.data.user));
+        setUser(res.data.user);
+        setToken(res.data.jwttoken);
 
         // Navigate to community configuration page
         navigate("/admin/community");
