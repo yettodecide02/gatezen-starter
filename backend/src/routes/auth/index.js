@@ -302,6 +302,21 @@ router.post("/signup", async (req, res) => {
           error: "Selected unit not found in this community/block.",
         });
       }
+
+      const users = await prisma.user.findMany({
+        where: {
+          unitId: unitId
+        },
+        select: {
+          id : true
+        }
+      })
+
+      if(users.length() > 4) return res.status(400).json({
+        error: "The maximum limit of users for this unit is reached",
+      });
+        
+
     }
 
     const user = await prisma.user.create({

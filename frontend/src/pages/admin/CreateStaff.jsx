@@ -214,9 +214,9 @@ const CreateStaff = () => {
       </div>
 
       <div className="bg-white rounded-lg shadow">
-        <div className="grid grid-cols-5 gap-4 p-4 font-semibold border-b">
+        <div className="grid grid-cols-6 gap-4 p-4 font-semibold border-b text-center">
           <div>Name</div>
-          <div>Email</div>
+          <div className="col-span-2">Email</div>
           <div>Role</div>
           <div>Status</div>
           <div>Actions</div>
@@ -229,16 +229,16 @@ const CreateStaff = () => {
           gatekeepers.map((gatekeeper) => (
             <div
               key={gatekeeper.id}
-              className="grid grid-cols-5 gap-4 p-4 border-b hover:bg-gray-50"
+              className="grid grid-cols-6 gap-4 p-4 border-b hover:bg-gray-50 text-center"
             >
-              <div>{gatekeeper.name}</div>
-              <div>{gatekeeper.email}</div>
-              <div>
+              <div className="col-span-1">{gatekeeper.name}</div>
+              <div className="col-span-2">{gatekeeper.email}</div>
+              <div className="col-span-1">
                 <span className="px-2 py-1 rounded-full text-xs bg-blue-100 text-blue-800">
                   {gatekeeper.role || "GATEKEEPER"}
                 </span>
               </div>
-              <div>
+              <div className="col-span-1">
                 <span
                   className={`px-2 py-1 rounded-full text-xs ${
                     gatekeeper.status === "APPROVED" ||

@@ -41,6 +41,7 @@ export default function Login() {
 
       if (!res) {
         setErr("Invalid email or password");
+        setCaptcha(null);
         return;
       }
 
@@ -57,6 +58,7 @@ export default function Login() {
       }
     } catch (e) {
       setErr(e.response?.data?.error || "Login failed");
+      setCaptcha(null);
     } finally {
       setLoading(false);
     }

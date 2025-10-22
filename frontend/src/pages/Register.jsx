@@ -61,6 +61,7 @@ export default function Register() {
     } catch (error) {
       console.error("Error fetching communities:", error);
       setErr("Failed to load communities. Please try again.");
+      setCaptcha(null);
     } finally {
       setLoadingCommunities(false);
     }

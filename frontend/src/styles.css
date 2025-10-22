@@ -149,12 +149,6 @@ a {
   font-size: 14px;
 }
 
-.auth-form {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
 .field {
   position: relative;
   display: flex;

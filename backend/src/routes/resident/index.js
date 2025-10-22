@@ -540,7 +540,7 @@ router.get("/bookings", async (req, res) => {
         actualFacilityIds = [facility.id];
       }
     }
-
+    
     if (actualFacilityIds.length === 0) {
       return res
         .status(404)

@@ -1100,10 +1100,7 @@ router.post("/units/:unitId/remove-resident", async (req, res) => {
 router.get("/community", async (req, res) => {
   try {
     // Get the user's community ID from the authenticated user
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.id },
-      select: { communityId: true },
-    });
+    const user = req.user;
 
     if (!user || !user.communityId) {
       return res.status(404).json({

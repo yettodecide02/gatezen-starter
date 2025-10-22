@@ -1,16 +1,16 @@
-const KEY = 'user';
+const KEY = "user";
 import Cookies from "js-cookie";
 
 export function setUser(user) {
-  Cookies.set(KEY, JSON.stringify(user));
+  Cookies.set(KEY, JSON.stringify(user), { expires: 30 });
 }
 
 export function setToken(token) {
-  Cookies.set('token', token);
+  Cookies.set("token", token, { expires: 30 });
 }
 
 export function getToken() {
-  return Cookies.get('token') || null;
+  return Cookies.get("token") || null;
 }
 
 export function getUser() {
@@ -24,7 +24,7 @@ export function getUser() {
 
 export function clearUser() {
   Cookies.remove(KEY);
-  Cookies.remove('token');
+  Cookies.remove("token");
 }
 
 export function isAuthed() {
@@ -33,5 +33,5 @@ export function isAuthed() {
 
 export function isAdmin() {
   const u = getUser();
-  return !!u && u.role === 'ADMIN';
+  return !!u && u.role === "ADMIN";
 }
