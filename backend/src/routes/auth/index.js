@@ -302,6 +302,23 @@ router.post("/signup", async (req, res) => {
           error: "Selected unit not found in this community/block.",
         });
       }
+
+      const users = await prisma.user.findMany({
+        where: {
+          unitId: unitId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      console.log(users);
+      
+
+      if (users.length > 4)
+        return res.status(400).json({
+          error: "The maximum limit of users for this unit is reached",
+        });
     }
 
     const user = await prisma.user.create({
@@ -330,7 +347,7 @@ router.post("/signup", async (req, res) => {
               },
             },
           },
-        }
+        },
       },
     });
 
@@ -366,7 +383,7 @@ router.get("/existing-user", async (req, res) => {
               },
             },
           },
-        }
+        },
       },
     });
 
@@ -394,30 +411,45 @@ router.get("/existing-user", async (req, res) => {
 });
 
 router.post("/send-otp", async (req, res) => {
-  const { email } = req.body;
-  if (!email) {
-    return res.status(400).send("Email is required");
+  const { email, operation } = req.body;
+  if ((!email, !operation)) {
+    return res.status(400).send("Email and operation are required");
   }
 
   const userOtp = Math.floor(100000 + Math.random() * 900000).toString();
   otps[email] = userOtp;
-  try {
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
-    });
-    if (!existingUser) {
-      return res.status(404).send("User not found");
+  if (operation != "Sign-up") {
+    try {
+      const existingUser = await prisma.user.findUnique({
+        where: { email },
+      });
+      if (!existingUser) {
+        return res.status(404).send("User not found");
+      }
+      await transporter.sendMail({
+        from: process.env.EMAIL_ID,
+        to: email,
+        subject: "Your GateZen password reset code",
+        text: "Your OTP code is: " + userOtp,
+      });
+      res.send("OTP sent successfully");
+    } catch (error) {
+      console.error("Error sending OTP:", error);
+      res.status(500).send("Error sending OTP");
     }
-    await transporter.sendMail({
-      from: process.env.EMAIL_ID,
-      to: email,
-      subject: "Your GateZen password reset code",
-      text: "Your OTP code is: " + userOtp,
-    });
-    res.send("OTP sent successfully");
-  } catch (error) {
-    console.error("Error sending OTP:", error);
-    res.status(500).send("Error sending OTP");
+  } else {
+    try {
+      await transporter.sendMail({
+        from: process.env.EMAIL_ID,
+        to: email,
+        subject: "Your GateZen email verification code",
+        text: "Your OTP code is: " + userOtp,
+      });
+      res.send({ message: "OTP sent successfully", success: true });
+    } catch (error) {
+      console.error("Error sending OTP:", error);
+      res.status(500).send("Error sending OTP");
+    }
   }
 });
 
@@ -425,7 +457,9 @@ router.post("/check-otp", async (req, res) => {
   const { email, otp } = req.body;
   if (otps[email] === otp) {
     delete otps[email];
-    return res.status(200).json({ message: "OTP verified successfully." });
+    return res
+      .status(200)
+      .json({ message: "OTP verified successfully.", success: true });
   }
   return res.status(400).json({ message: "Invalid OTP." });
 });

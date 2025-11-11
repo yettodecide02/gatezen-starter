@@ -365,6 +365,7 @@ router.get("/residents", async (req, res) => {
         role: true,
         status: true,
         unitId: true,
+        createdAt: true,
         unit: {
           select: {
             id: true,
@@ -1100,10 +1101,7 @@ router.post("/units/:unitId/remove-resident", async (req, res) => {
 router.get("/community", async (req, res) => {
   try {
     // Get the user's community ID from the authenticated user
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.id },
-      select: { communityId: true },
-    });
+    const user = req.user;
 
     if (!user || !user.communityId) {
       return res.status(404).json({
@@ -1197,10 +1195,6 @@ router.post("/community", async (req, res) => {
       await prisma.facilityConfiguration.deleteMany({
         where: { communityId: community.id },
       });
-
-      console.log(
-        `Deleted existing facility configurations and facilities for community ${community.id}`
-      );
     } else {
       // Create new community
       community = await prisma.community.create({
@@ -1243,8 +1237,6 @@ router.post("/community", async (req, res) => {
         })
       );
 
-      console.log(`Created ${createdConfigs.length} facility configurations`);
-
       // Create actual facility records for enabled facilities
       for (const config of createdConfigs) {
         if (config.enabled) {
@@ -1272,10 +1264,6 @@ router.post("/community", async (req, res) => {
             await prisma.facility.createMany({
               data: facilitiesToCreate,
             });
-
-            console.log(
-              `Created ${facilitiesToCreate.length} actual facilities for ${config.facilityType}`
-            );
           }
         }
       }
@@ -1598,14 +1586,6 @@ router.patch(
         });
       }
 
-      console.log("Updating facility configuration:", {
-        facilityType: facilityTypeEnum,
-        enabled: facilityData.enabled,
-        quantity: facilityData.quantity,
-        maxCapacity: facilityData.maxCapacity,
-        operatingHours: facilityData.operatingHours,
-      });
-
       // Update or create facility configuration
       const facility = await prisma.facilityConfiguration.upsert({
         where: {
@@ -1642,13 +1622,6 @@ router.patch(
         },
       });
 
-      console.log("Facility configuration updated:", {
-        id: facility.id,
-        facilityType: facility.facilityType,
-        enabled: facility.enabled,
-        quantity: facility.quantity,
-      });
-
       // If facility is enabled, ensure actual facility records exist
       if (facilityData.enabled) {
         const existingFacilities = await prisma.facility.findMany({
@@ -1675,13 +1648,6 @@ router.patch(
             },
           });
         }
-
-        console.log(
-          "Existing facilities count:",
-          currentCount,
-          "Target count:",
-          targetCount
-        );
 
         // Create missing facilities if quantity increased
         const currentCount = existingFacilities.length;
@@ -1711,8 +1677,6 @@ router.patch(
           await prisma.facility.createMany({
             data: facilitiesToCreate,
           });
-
-          console.log(`Created ${facilitiesToCreate.length} new facilities`);
         } else if (currentCount > targetCount) {
           // Remove excess facilities
           const facilitiesToRemove = existingFacilities.slice(targetCount);
@@ -1750,14 +1714,8 @@ router.patch(
           await prisma.facility.createMany({
             data: facilitiesToCreate,
           });
-
-          console.log(
-            `Created ${facilitiesToCreate.length} initial facilities`
-          );
         }
       } else {
-        console.log("Facility disabled, removing all facility records");
-
         // If facility is disabled, remove all actual facility records
         await prisma.facility.deleteMany({
           where: {
@@ -1957,7 +1915,7 @@ router.delete("/gatekeepers/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const gatekeeper = await prisma.user.findUnique({
-      where: { id }
+      where: { id },
     });
     if (!gatekeeper) {
       return res.status(404).json({ error: "Gatekeeper not found" });
@@ -1967,6 +1925,63 @@ router.delete("/gatekeepers/:id", async (req, res) => {
   } catch (err) {
     console.error("Error deleting gatekeeper:", err);
     res.status(500).json({ error: "Failed to delete gatekeeper" });
+  }
+});
+
+router.get("/visitor", async (req, res) => {
+  const { communityId, from, to } = req.query;
+
+  if (!communityId || !from || !to) {
+    return res
+      .status(400)
+      .json({ error: "All fields (communityId, from, to) are required" });
+  }
+
+  try {
+    // Convert query params to Date objects
+    const fromDate = new Date(from);
+    fromDate.setUTCHours(0, 0, 0, 0);
+
+    const toDate = new Date(to);
+    toDate.setUTCHours(23, 59, 59, 999);
+
+    const visitors = await prisma.visitor.findMany({
+      where: {
+        communityId: communityId,
+        visitDate: {
+          gte: fromDate,
+          lte: toDate,
+        },
+      },
+      include: {
+        user: {
+          select: {
+            name: true,
+            id: true,
+            unit: {
+              select: {
+                id: true,
+                number: true,
+                block: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        visitDate: "desc",
+      },
+    });
+
+    return res.status(200).json({ visitors });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to get visitors" });
   }
 });
 

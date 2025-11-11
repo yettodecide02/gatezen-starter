@@ -1,5 +1,4 @@
-// frontend/src/ProtectedRoute.jsx
-import React from "react";
+
 import { Navigate, useLocation } from "react-router-dom";
 import { isAuthed, getUser } from "./lib/auth";
 
@@ -12,8 +11,10 @@ export default function ProtectedRoute({ children, allowedRoles }) {
 
   const user = getUser();
 
-  // Check if user status is pending
-  if (user && user.status === "PENDING") {
+  if (
+    (user && user.status === "PENDING") ||
+    (user && user.status === "REJECTED")
+  ) {
     return <Navigate to="/pending" replace />;
   }
 

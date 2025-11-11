@@ -9,6 +9,7 @@ import {
   FiUsers,
   FiSave,
   FiX,
+  FiCheckCircle,
 } from "react-icons/fi";
 import { getToken, getUser } from "../../lib/auth";
 import { ToastContainer, useToast } from "../../components/Toast";
@@ -26,17 +27,13 @@ const getAuthHeaders = () => {
 export default function Blocks() {
   const [blocks, setBlocks] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const [showBlockForm, setShowBlockForm] = useState(false);
   const [showUnitForm, setShowUnitForm] = useState(false);
   const [editingBlock, setEditingBlock] = useState(null);
-  const [selectedBlock, setSelectedBlock] = useState(null);
+  const [deleteLoading, setDeleteLoading] = useState({});
 
-  // Toast management using custom hook
   const { toasts, addToast, removeToast } = useToast();
 
-  // Form states
   const [blockForm, setBlockForm] = useState({
     name: "",
     description: "",
@@ -48,7 +45,7 @@ export default function Blocks() {
   });
 
   // Multi-unit creation state
-  const [unitCreationStep, setUnitCreationStep] = useState(1); // 1: count, 2: create units
+  const [unitCreationStep, setUnitCreationStep] = useState(1);
   const [unitsToCreate, setUnitsToCreate] = useState(1);
   const [currentUnitIndex, setCurrentUnitIndex] = useState(0);
   const [currentUnitNumber, setCurrentUnitNumber] = useState("");
@@ -60,7 +57,6 @@ export default function Blocks() {
 
   const loadBlocks = async () => {
     setLoading(true);
-    setError("");
 
     try {
       const user = getUser();
@@ -72,8 +68,6 @@ export default function Blocks() {
       });
 
       if (response.data) {
-
-        // Handle different response formats
         const blocksData =
           response.data.blocks || response.data.data || response.data;
         setBlocks(Array.isArray(blocksData) ? blocksData : []);
@@ -176,6 +170,8 @@ export default function Blocks() {
       return;
     }
 
+    setDeleteLoading((prev) => ({ ...prev, [blockId]: true }));
+
     try {
       const response = await axios.delete(
         `${API_URL}/admin/blocks/${blockId}`,
@@ -201,6 +197,8 @@ export default function Blocks() {
         "Delete Failed",
         error.response?.data?.message || "Failed to delete block"
       );
+    } finally {
+      setDeleteLoading((prev) => ({ ...prev, [blockId]: false }));
     }
   };
 
@@ -237,12 +235,10 @@ export default function Blocks() {
           `Unit ${currentUnitNumber} created successfully!`
         );
 
-        // Move to next unit or finish
         if (currentUnitIndex + 1 < unitsToCreate) {
           setCurrentUnitIndex((prev) => prev + 1);
           setCurrentUnitNumber("");
         } else {
-          // All units created, close modal and refresh
           addToast(
             "success",
             "All Units Created",
@@ -278,6 +274,8 @@ export default function Blocks() {
       return;
     }
 
+    setDeleteLoading((prev) => ({ ...prev, [`unit-${unitId}`]: true }));
+
     try {
       const response = await axios.delete(`${API_URL}/admin/units/${unitId}`, {
         headers: getAuthHeaders(),
@@ -300,6 +298,8 @@ export default function Blocks() {
         "Delete Failed",
         error.response?.data?.message || "Failed to delete unit"
       );
+    } finally {
+      setDeleteLoading((prev) => ({ ...prev, [`unit-${unitId}`]: false }));
     }
   };
 
@@ -346,12 +346,6 @@ export default function Blocks() {
     setCurrentUnitNumber("");
   };
 
-  const handleUnitNumberKeyPress = (e) => {
-    if (e.key === "Enter") {
-      handleCreateUnit(e);
-    }
-  };
-
   const cancelForm = () => {
     setShowBlockForm(false);
     setShowUnitForm(false);
@@ -360,24 +354,84 @@ export default function Blocks() {
     resetUnitCreationForm();
   };
 
+  // Calculate statistics
+  const stats = {
+    totalBlocks: blocks.length,
+    totalUnits: blocks.reduce(
+      (sum, block) => sum + (block.units?.length || 0),
+      0
+    ),
+    occupiedUnits: blocks.reduce(
+      (sum, block) =>
+        sum +
+        (block.units?.filter((unit) => unit.residents?.length > 0).length || 0),
+      0
+    ),
+  };
+
   return (
-    <div style={{ padding: "24px", maxWidth: "1200px", margin: "0 auto" }}>
-      <div style={{ marginBottom: "32px" }}>
-        <h2 style={{ margin: 0, marginBottom: "8px" }}>
-          <FiHome style={{ marginRight: "8px" }} />
-          Blocks & Units Management
-        </h2>
-        <p style={{ color: "#666", margin: 0 }}>
-          Manage blocks and units in your community
-        </p>
+    <div className="max-w-7xl mx-auto p-4">
+      {/* Header */}
+      <div className="mb-6">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="p-2 rounded-lg">
+            <FiHome size={24} />
+          </div>
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">
+              Blocks & Units Management
+            </h2>
+            <p className="text-sm text-gray-600">
+              Manage blocks and units in your community
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Statistics Cards */}
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="bg-white rounded-xl p-4 border border-gray-200 hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg">
+              <FiHome size={20} />
+            </div>
+            <div className="text-sm font-medium text-gray-600">
+              Total Blocks
+            </div>
+          </div>
+          <div className="text-2xl font-bold text-gray-900">
+            {stats.totalBlocks}
+          </div>
+        </div>
+        <div className="bg-white rounded-xl p-4 border border-gray-200 hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-cyan-100 text-cyan-600 rounded-lg">
+              <FiGrid size={20} />
+            </div>
+            <div className="text-sm font-medium text-gray-600">Total Units</div>
+          </div>
+          <div className="text-2xl font-bold text-gray-900">
+            {stats.totalUnits}
+          </div>
+        </div>
+        <div className="bg-white rounded-xl p-4 border border-gray-200 hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-green-100 text-green-600 rounded-lg">
+              <FiUsers size={20} />
+            </div>
+            <div className="text-sm font-medium text-gray-600">Occupied</div>
+          </div>
+          <div className="text-2xl font-bold text-gray-900">
+            {stats.occupiedUnits}
+          </div>
+        </div>
       </div>
 
       {/* Create Block Button */}
-      <div style={{ marginBottom: "24px" }}>
+      <div className="mb-6">
         <button
-          className="btn"
           onClick={() => setShowBlockForm(true)}
-          style={{ display: "flex", alignItems: "center", gap: "8px" }}
+          className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
         >
           <FiPlus />
           Create New Block
@@ -386,47 +440,15 @@ export default function Blocks() {
 
       {/* Block Form Modal */}
       {showBlockForm && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(0, 0, 0, 0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000,
-          }}
-        >
-          <div
-            className="card"
-            style={{
-              width: "100%",
-              maxWidth: "500px",
-              margin: "20px",
-              position: "relative",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: "24px",
-              }}
-            >
-              <h3 style={{ margin: 0 }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/20 bg-opacity-50">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h3 className="text-xl font-semibold text-gray-900">
                 {editingBlock ? "Edit Block" : "Create New Block"}
               </h3>
               <button
                 onClick={cancelForm}
-                style={{
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                }}
+                className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
               >
                 <FiX size={20} />
               </button>
@@ -434,67 +456,52 @@ export default function Blocks() {
 
             <form
               onSubmit={editingBlock ? handleUpdateBlock : handleCreateBlock}
+              className="px-6 py-4 space-y-4"
             >
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  className="label"
-                  style={{ display: "block", marginBottom: "8px" }}
-                >
-                  Block Name *
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Block Name <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
-                  className="input"
                   value={blockForm.name}
                   onChange={(e) =>
                     setBlockForm({ ...blockForm, name: e.target.value })
                   }
                   placeholder="e.g., A, B, Tower 1"
                   required
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 />
               </div>
 
-              <div style={{ marginBottom: "24px" }}>
-                <label
-                  className="label"
-                  style={{ display: "block", marginBottom: "8px" }}
-                >
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
                   Description
                 </label>
                 <textarea
-                  className="textarea"
                   value={blockForm.description}
                   onChange={(e) =>
                     setBlockForm({ ...blockForm, description: e.target.value })
                   }
                   placeholder="Optional description"
                   rows={3}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
                 />
               </div>
 
-              <div
-                style={{
-                  display: "flex",
-                  gap: "12px",
-                  justifyContent: "flex-end",
-                }}
-              >
+              <div className="flex justify-end gap-3 pt-4">
                 <button
                   type="button"
                   onClick={cancelForm}
-                  style={{
-                    padding: "10px 16px",
-                    background: "#e5e7eb",
-                    color: "#374151",
-                    border: "none",
-                    borderRadius: "6px",
-                    cursor: "pointer",
-                  }}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   Cancel
                 </button>
-                <button type="submit" className="btn">
-                  <FiSave style={{ marginRight: "6px" }} />
+                <button
+                  type="submit"
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
+                >
+                  <FiSave />
                   {editingBlock ? "Update Block" : "Create Block"}
                 </button>
               </div>
@@ -505,67 +512,34 @@ export default function Blocks() {
 
       {/* Unit Form Modal */}
       {showUnitForm && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(0, 0, 0, 0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000,
-          }}
-        >
-          <div
-            className="card"
-            style={{
-              width: "100%",
-              maxWidth: "500px",
-              margin: "20px",
-              position: "relative",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: "24px",
-              }}
-            >
-              <h3 style={{ margin: 0 }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h3 className="text-xl font-semibold text-gray-900">
                 {unitCreationStep === 1
                   ? "Create Units"
                   : `Create Unit ${currentUnitIndex + 1} of ${unitsToCreate}`}
               </h3>
               <button
                 onClick={cancelForm}
-                style={{
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                }}
+                className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
               >
                 <FiX size={20} />
               </button>
             </div>
 
             {unitCreationStep === 1 ? (
-              // Step 1: Ask how many units to create
-              <form onSubmit={handleUnitCountSubmit}>
-                <div style={{ marginBottom: "20px" }}>
-                  <label
-                    className="label"
-                    style={{ display: "block", marginBottom: "8px" }}
-                  >
-                    How many units do you want to create? *
+              <form
+                onSubmit={handleUnitCountSubmit}
+                className="px-6 py-4 space-y-4"
+              >
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    How many units do you want to create?{" "}
+                    <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="number"
-                    className="input"
                     value={unitsToCreate}
                     onChange={(e) =>
                       setUnitsToCreate(parseInt(e.target.value) || 1)
@@ -574,72 +548,41 @@ export default function Blocks() {
                     min="1"
                     max="50"
                     required
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                   />
-                  <p
-                    style={{
-                      fontSize: "12px",
-                      color: "#666",
-                      marginTop: "4px",
-                    }}
-                  >
+                  <p className="text-xs text-gray-500 mt-2">
                     You can create up to 50 units at once
                   </p>
                 </div>
 
-                <div
-                  style={{
-                    display: "flex",
-                    gap: "12px",
-                    justifyContent: "flex-end",
-                  }}
-                >
+                <div className="flex justify-end gap-3 pt-4">
                   <button
                     type="button"
                     onClick={cancelForm}
-                    style={{
-                      padding: "10px 16px",
-                      background: "#e5e7eb",
-                      color: "#374151",
-                      border: "none",
-                      borderRadius: "6px",
-                      cursor: "pointer",
-                    }}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                   >
                     Cancel
                   </button>
-                  <button type="submit" className="btn">
-                    <FiSave style={{ marginRight: "6px" }} />
+                  <button
+                    type="submit"
+                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
+                  >
                     Next
                   </button>
                 </div>
               </form>
             ) : (
-              // Step 2: Create individual units
-              <div>
+              <div className="px-6 py-4">
                 {createdUnits.length > 0 && (
-                  <div style={{ marginBottom: "16px" }}>
-                    <h4
-                      style={{
-                        margin: "0 0 8px 0",
-                        fontSize: "14px",
-                        color: "#666",
-                      }}
-                    >
-                      Created Units:
+                  <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+                    <h4 className="text-sm font-semibold text-green-800 mb-2 flex items-center gap-2">
+                      <FiCheckCircle /> Created Units:
                     </h4>
-                    <div
-                      style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}
-                    >
+                    <div className="flex flex-wrap gap-2">
                       {createdUnits.map((unit, index) => (
                         <span
                           key={index}
-                          style={{
-                            padding: "2px 8px",
-                            background: "#d1fae5",
-                            color: "#065f46",
-                            borderRadius: "4px",
-                            fontSize: "12px",
-                          }}
+                          className="inline-flex items-center px-2.5 py-1 text-xs font-medium bg-green-100 text-green-700 border border-green-200 rounded-full"
                         >
                           {unit.number}
                         </span>
@@ -648,47 +591,31 @@ export default function Blocks() {
                   </div>
                 )}
 
-                <form onSubmit={handleCreateUnit}>
-                  <div style={{ marginBottom: "20px" }}>
-                    <label
-                      className="label"
-                      style={{ display: "block", marginBottom: "8px" }}
-                    >
-                      Unit {currentUnitIndex + 1} Number *
+                <form onSubmit={handleCreateUnit} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Unit {currentUnitIndex + 1} Number{" "}
+                      <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="text"
-                      className="input"
                       value={currentUnitNumber}
                       onChange={(e) => setCurrentUnitNumber(e.target.value)}
-                      onKeyPress={handleUnitNumberKeyPress}
                       placeholder="e.g., 101, A-01, 1A"
                       required
                       autoFocus
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                     />
-                    <p
-                      style={{
-                        fontSize: "12px",
-                        color: "#666",
-                        marginTop: "4px",
-                      }}
-                    >
+                    <p className="text-xs text-gray-500 mt-2">
                       Press Enter or click OK to create this unit
                     </p>
                   </div>
 
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: "12px",
-                      justifyContent: "space-between",
-                    }}
-                  >
+                  <div className="flex justify-between items-center pt-4">
                     <button
                       type="button"
                       onClick={() => {
                         if (createdUnits.length > 0) {
-                          // If some units were created, finish and refresh
                           addToast(
                             "info",
                             "Units Created",
@@ -698,39 +625,27 @@ export default function Blocks() {
                           setShowUnitForm(false);
                           loadBlocks();
                         } else {
-                          // Go back to step 1
                           setUnitCreationStep(1);
                         }
                       }}
-                      style={{
-                        padding: "10px 16px",
-                        background: "#e5e7eb",
-                        color: "#374151",
-                        border: "none",
-                        borderRadius: "6px",
-                        cursor: "pointer",
-                      }}
+                      className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                     >
                       {createdUnits.length > 0 ? "Finish" : "Back"}
                     </button>
 
-                    <div style={{ display: "flex", gap: "8px" }}>
+                    <div className="flex gap-2">
                       <button
                         type="button"
                         onClick={cancelForm}
-                        style={{
-                          padding: "10px 16px",
-                          background: "#fee2e2",
-                          color: "#dc2626",
-                          border: "none",
-                          borderRadius: "6px",
-                          cursor: "pointer",
-                        }}
+                        className="px-4 py-2 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors"
                       >
                         Cancel All
                       </button>
-                      <button type="submit" className="btn">
-                        <FiSave style={{ marginRight: "6px" }} />
+                      <button
+                        type="submit"
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
+                      >
+                        <FiSave />
                         OK
                       </button>
                     </div>
@@ -742,206 +657,135 @@ export default function Blocks() {
         </div>
       )}
 
-      {/* Blocks List */}
+      {/* Block List */}
       {loading ? (
-        <div style={{ textAlign: "center", padding: "40px" }}>
-          <div className="spinner" style={{ margin: "0 auto" }}></div>
-          <p style={{ color: "#666", marginTop: "16px" }}>Loading blocks...</p>
+        <div className="bg-white rounded-xl border border-gray-200 p-16">
+          <div className="flex flex-col items-center justify-center gap-4">
+            <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+            <p className="text-gray-600">Loading blocks...</p>
+          </div>
         </div>
       ) : blocks.length === 0 ? (
-        <div className="card" style={{ textAlign: "center", padding: "40px" }}>
-          <FiHome size={48} style={{ color: "#ccc", marginBottom: "16px" }} />
-          <h3 style={{ color: "#666", marginBottom: "8px" }}>
-            No blocks found
-          </h3>
-          <p style={{ color: "#999", marginBottom: "24px" }}>
-            Create your first block to get started
-          </p>
-          <button
-            className="btn"
-            onClick={() => setShowBlockForm(true)}
-            style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}
-          >
-            <FiPlus />
-            Create Block
-          </button>
+        <div className="bg-white rounded-xl border border-gray-200 p-16">
+          <div className="text-center">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 rounded-full mb-4">
+              <FiHome size={32} className="text-gray-400" />
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+              No blocks found
+            </h3>
+            <p className="text-sm text-gray-600 mb-6">
+              Create your first block to get started
+            </p>
+            <button
+              onClick={() => setShowBlockForm(true)}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
+            >
+              <FiPlus />
+              Create Block
+            </button>
+          </div>
         </div>
       ) : (
-        <div style={{ display: "grid", gap: "24px" }}>
+        <div className="space-y-6">
           {blocks.map((block) => (
-            <div key={block.id} className="card">
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  marginBottom: "16px",
-                }}
-              >
-                <div>
-                  <h3
-                    style={{
-                      margin: "0 0 8px 0",
-                      display: "flex",
-                      alignItems: "center",
-                    }}
-                  >
-                    <FiHome style={{ marginRight: "8px" }} />
-                    Block {block.name}
-                  </h3>
+            <div
+              key={block.id}
+              className="bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition-shadow"
+            >
+              <div className="px-6 py-4 border-b border-gray-200 flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg">
+                      <FiHome size={20} />
+                    </div>
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      Block {block.name}
+                    </h3>
+                  </div>
                   {block.description && (
-                    <p style={{ color: "#666", margin: 0 }}>
+                    <p className="text-sm text-gray-600 ml-11">
                       {block.description}
                     </p>
                   )}
                 </div>
-                <div style={{ display: "flex", gap: "8px" }}>
+                <div className="flex gap-2 flex-shrink-0">
                   <button
                     onClick={() => startEditBlock(block)}
-                    style={{
-                      padding: "6px",
-                      background: "#e5e7eb",
-                      border: "none",
-                      borderRadius: "4px",
-                      cursor: "pointer",
-                    }}
+                    className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                     title="Edit block"
                   >
-                    <FiEdit2 size={14} />
+                    <FiEdit2 size={16} />
                   </button>
                   <button
                     onClick={() => handleDeleteBlock(block.id)}
-                    style={{
-                      padding: "6px",
-                      background: "#fee2e2",
-                      color: "#dc2626",
-                      border: "none",
-                      borderRadius: "4px",
-                      cursor: "pointer",
-                    }}
+                    disabled={deleteLoading[block.id]}
+                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     title="Delete block"
                   >
-                    <FiTrash2 size={14} />
+                    <FiTrash2 size={16} />
                   </button>
                 </div>
               </div>
 
-              {/* Units in this block */}
-              <div
-                style={{ borderTop: "1px solid #e5e7eb", paddingTop: "16px" }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginBottom: "12px",
-                  }}
-                >
-                  <h4
-                    style={{ margin: 0, display: "flex", alignItems: "center" }}
-                  >
-                    <FiGrid style={{ marginRight: "6px" }} />
+              <div className="px-6 py-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+                    <FiGrid className="text-cyan-600" />
                     Units ({block.units?.length || 0})
                   </h4>
                   <button
                     onClick={() => startCreateUnit(block.id)}
-                    className="btn"
-                    style={{
-                      padding: "6px 12px",
-                      fontSize: "12px",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "4px",
-                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
                   >
-                    <FiPlus size={12} />
+                    <FiPlus size={14} />
                     Add Unit
                   </button>
                 </div>
 
-                {block.units && block.units.length > 0 ? (
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns:
-                        "repeat(auto-fill, minmax(200px, 1fr))",
-                      gap: "12px",
-                    }}
-                  >
+                {block.units?.length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-2">
                     {block.units.map((unit) => (
                       <div
                         key={unit.id}
-                        style={{
-                          padding: "12px",
-                          background: "#f9fafb",
-                          border: "1px solid #e5e7eb",
-                          borderRadius: "6px",
-                          position: "relative",
-                        }}
+                        className="bg-gray-50 border border-gray-200 rounded-lg p-4 hover:bg-gray-100 transition-colors"
                       >
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "flex-start",
-                          }}
-                        >
-                          <div>
-                            <h5 style={{ margin: "0 0 4px 0" }}>
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1 min-w-0">
+                            <h5 className="font-semibold text-gray-900 mb-2">
                               Unit {unit.number}
                             </h5>
-                            {unit.residents && unit.residents.length > 0 ? (
-                              <p
-                                style={{
-                                  margin: "4px 0 0 0",
-                                  fontSize: "12px",
-                                  color: "#059669",
-                                }}
-                              >
-                                <FiUsers
-                                  size={10}
-                                  style={{ marginRight: "4px" }}
-                                />
-                                Occupied by {unit.residents[0].name}
-                                {unit.residents.length > 1 &&
-                                  ` +${unit.residents.length - 1} more`}
-                              </p>
+                            {unit.residents?.length > 0 ? (
+                              <div className="flex items-center gap-1.5 text-xs text-green-700">
+                                <FiUsers size={12} className="flex-shrink-0" />
+                                <span className="truncate">
+                                  {unit.residents[0].name}
+                                  {unit.residents.length > 1 &&
+                                    ` +${unit.residents.length - 1}`}
+                                </span>
+                              </div>
                             ) : (
-                              <p
-                                style={{
-                                  margin: "4px 0 0 0",
-                                  fontSize: "12px",
-                                  color: "#6b7280",
-                                  fontStyle: "italic",
-                                }}
-                              >
+                              <p className="text-xs text-gray-400 italic">
                                 Vacant
                               </p>
                             )}
                           </div>
                           <button
                             onClick={() => handleDeleteUnit(unit.id)}
-                            style={{
-                              padding: "4px",
-                              background: "#fee2e2",
-                              color: "#dc2626",
-                              border: "none",
-                              borderRadius: "3px",
-                              cursor: "pointer",
-                            }}
+                            disabled={deleteLoading[`unit-${unit.id}`]}
+                            className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
                             title="Delete unit"
                           >
-                            <FiTrash2 size={12} />
+                            <FiTrash2 size={14} />
                           </button>
                         </div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <p style={{ color: "#999", fontStyle: "italic", margin: 0 }}>
-                    No units in this block yet
-                  </p>
+                  <div className="text-center py-8 text-sm text-gray-500 bg-gray-50 rounded-lg border-2 border-dashed border-gray-200">
+                    No units in this block yet. Click "Add Unit" to create one.
+                  </div>
                 )}
               </div>
             </div>
@@ -949,7 +793,7 @@ export default function Blocks() {
         </div>
       )}
 
-      {/* Toast Container */}
+      {/* Toasts */}
       <ToastContainer toasts={toasts} onClose={removeToast} />
     </div>
   );

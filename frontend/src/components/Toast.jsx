@@ -9,7 +9,7 @@ function Toast({ toast, onClose }) {
     }, 3000);
 
     return () => clearTimeout(timer);
-  }, [toast.id, onClose]);
+  }, []);
 
   const getIcon = () => {
     switch (toast.type) {
