@@ -8,9 +8,10 @@ import {
   FiPlus,
   FiMinus,
   FiDollarSign,
-  FiUsers,
   FiSave,
   FiMapPin,
+  FiX,
+  FiCheckCircle,
 } from "react-icons/fi";
 import { getToken, getUser } from "../../lib/auth";
 import { ToastContainer, useToast } from "../../components/Toast";
@@ -37,7 +38,6 @@ const PRICE_TYPES = [
   { id: "one_time", name: "One Time" },
 ];
 
-// API Configuration
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 const getAuthHeaders = () => {
   const token = getToken() || "";
@@ -56,11 +56,10 @@ export default function Community() {
 
   const [facilities, setFacilities] = useState({});
   const [loading, setLoading] = useState(false);
+  const [selectedFacility, setSelectedFacility] = useState(null);
 
-  // Toast management using custom hook
   const { toasts, addToast, removeToast } = useToast();
 
-  // Initialize facilities object and load existing community data
   useEffect(() => {
     const initialFacilities = {};
     FACILITY_TYPES.forEach((type) => {
@@ -76,8 +75,6 @@ export default function Community() {
       };
     });
     setFacilities(initialFacilities);
-
-    // Load existing community data
     loadCommunityData();
   }, []);
 
@@ -91,18 +88,15 @@ export default function Community() {
       if (response.data.success && response.data.data) {
         const community = response.data.data;
 
-        // Set community basic data
         setCommunityData({
           name: community.name || "",
           description: community.description || "",
           address: community.address || "",
         });
 
-        // Convert facilities back to frontend format
         if (community.facilities && community.facilities.length > 0) {
           const facilitiesMap = {};
 
-          // Initialize with defaults first
           FACILITY_TYPES.forEach((type) => {
             facilitiesMap[type.id] = {
               enabled: false,
@@ -116,7 +110,6 @@ export default function Community() {
             };
           });
 
-          // Override with actual data
           community.facilities.forEach((facility) => {
             facilitiesMap[facility.facilityType] = {
               enabled: facility.enabled,
@@ -135,7 +128,6 @@ export default function Community() {
       }
     } catch (error) {
       console.error("Error loading community data:", error);
-      // Don't show error to user for initial load, just log it
     }
   };
 
@@ -151,10 +143,6 @@ export default function Community() {
         [field]: value,
       },
     }));
-  };
-
-  const toggleFacility = (facilityId) => {
-    updateFacility(facilityId, "enabled", !facilities[facilityId]?.enabled);
   };
 
   const adjustQuantity = (facilityId, delta) => {
@@ -173,7 +161,6 @@ export default function Community() {
     setLoading(true);
 
     try {
-      // Prepare data for API
       const enabledFacilities = Object.entries(facilities)
         .filter(([_, config]) => config.enabled)
         .map(([facilityId, config]) => ({
@@ -187,9 +174,6 @@ export default function Community() {
         communityId: getUser().communityId,
       };
 
-      console.log("Community configuration:", payload);
-
-      // Make API call to save community configuration
       const response = await axios.post(`${API_URL}/admin/community`, payload, {
         headers: getAuthHeaders(),
       });
@@ -200,8 +184,6 @@ export default function Community() {
           "Configuration Saved",
           response.data.message || "Community configuration saved successfully!"
         );
-
-        // Reload the community data to reflect any server-side changes
         await loadCommunityData();
       } else {
         addToast(
@@ -218,23 +200,28 @@ export default function Community() {
           err.message ||
           "Failed to save community configuration"
       );
-      console.error("Save error:", err);
     } finally {
       setLoading(false);
     }
   };
 
+  const enabledCount = Object.values(facilities).filter(
+    (f) => f.enabled
+  ).length;
+
   return (
-    <div className="modern-content" style={{ padding: "32px" }}>
+    <div className="max-w-7xl mx-auto p-4">
       {/* Header */}
-      <div className="section-header" style={{ marginBottom: "32px" }}>
-        <div className="section-left">
-          <div className="section-icon">
-            <FiHome />
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg">
+            <FiHome size={24} />
           </div>
           <div>
-            <h2>Community Configuration</h2>
-            <p className="muted">
+            <h2 className="text-2xl font-bold text-gray-900">
+              Community Configuration
+            </h2>
+            <p className="text-sm text-gray-600">
               Configure your community details and facilities
             </p>
           </div>
@@ -242,7 +229,7 @@ export default function Community() {
         <button
           onClick={handleSave}
           disabled={loading || !communityData.name.trim()}
-          className="btn primary"
+          className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <FiSave />
           {loading ? "Saving..." : "Save Configuration"}
@@ -250,25 +237,24 @@ export default function Community() {
       </div>
 
       {/* Community Details */}
-      <div className="modern-card" style={{ marginBottom: "32px" }}>
-        <div className="card-header" style={{ marginBottom: "24px" }}>
-          <h3 style={{ display: "flex", alignItems: "center", margin: 0 }}>
-            <FiMapPin style={{ marginRight: "8px" }} />
+      <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg">
+            <FiMapPin size={20} />
+          </div>
+          <h3 className="text-lg font-semibold text-gray-900">
             Community Details
           </h3>
         </div>
 
-        <div style={{ display: "grid", gap: "20px" }}>
+        <div className="space-y-4">
           <div>
-            <label
-              className="label"
-              style={{ marginBottom: "8px", display: "block" }}
-            >
-              Community Name *
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Community Name <span className="text-red-500">*</span>
             </label>
             <input
               type="text"
-              className="input"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
               value={communityData.name}
               onChange={(e) => updateCommunityData("name", e.target.value)}
               placeholder="Enter community name"
@@ -277,14 +263,11 @@ export default function Community() {
           </div>
 
           <div>
-            <label
-              className="label"
-              style={{ marginBottom: "8px", display: "block" }}
-            >
+            <label className="block text-sm font-medium text-gray-700 mb-2">
               Description
             </label>
             <textarea
-              className="textarea"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
               value={communityData.description}
               onChange={(e) =>
                 updateCommunityData("description", e.target.value)
@@ -295,14 +278,11 @@ export default function Community() {
           </div>
 
           <div>
-            <label
-              className="label"
-              style={{ marginBottom: "8px", display: "block" }}
-            >
+            <label className="block text-sm font-medium text-gray-700 mb-2">
               Address
             </label>
             <textarea
-              className="textarea"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
               value={communityData.address}
               onChange={(e) => updateCommunityData("address", e.target.value)}
               placeholder="Community address"
@@ -313,197 +293,229 @@ export default function Community() {
       </div>
 
       {/* Facilities Configuration */}
-      <div className="modern-card">
-        <div className="card-header" style={{ marginBottom: "24px" }}>
-          <div>
-            <h3
-              style={{
-                display: "flex",
-                alignItems: "center",
-                margin: "0 0 8px 0",
-              }}
-            >
-              <FiSettings style={{ marginRight: "8px" }} />
+      <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <div className="mb-6">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-cyan-100 text-cyan-600 rounded-lg">
+              <FiSettings size={20} />
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900">
               Facilities & Amenities
             </h3>
-            <p className="muted" style={{ margin: 0 }}>
-              Toggle facilities and configure their settings
-            </p>
           </div>
+          <p className="text-sm text-gray-600">
+            Click on a facility to view or configure its settings •{" "}
+            {enabledCount} enabled
+          </p>
         </div>
 
-        <div className="stack" style={{ gap: "16px" }}>
+        {/* Facility Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           {FACILITY_TYPES.map((facilityType) => {
             const config = facilities[facilityType.id] || {};
             const isEnabled = config.enabled;
 
             return (
-              <div key={facilityType.id} className="facility-card">
-                {/* Facility Header */}
-                <div className="facility-header">
-                  <div className="facility-info">
-                    <span className="facility-icon">{facilityType.icon}</span>
-                    <div>
-                      <h4 className="facility-name">{facilityType.name}</h4>
-                      <span className="facility-status">
-                        {isEnabled ? "Enabled" : "Disabled"}
-                      </span>
-                    </div>
+              <button
+                key={facilityType.id}
+                onClick={() => setSelectedFacility(facilityType)}
+                className={`relative rounded-xl border-2 transition-all p-4 flex flex-col items-center text-center hover:shadow-lg ${
+                  isEnabled
+                    ? "bg-emerald-50 border-emerald-400 shadow-sm"
+                    : "bg-gray-50 border-gray-300 hover:border-gray-400"
+                }`}
+              >
+                {isEnabled && (
+                  <div className="absolute top-2 right-2 w-5 h-5 bg-emerald-500 rounded-full flex items-center justify-center">
+                    <FiCheckCircle size={14} className="text-white" />
                   </div>
+                )}
+                <span className="text-4xl mb-2">{facilityType.icon}</span>
+                <h4 className="text-sm font-semibold text-gray-900">
+                  {facilityType.name}
+                </h4>
+                <span
+                  className={`text-xs mt-1 font-medium ${
+                    isEnabled ? "text-emerald-600" : "text-gray-500"
+                  }`}
+                >
+                  {isEnabled ? "Enabled" : "Disabled"}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Facility Configuration Modal */}
+      {selectedFacility && (
+        <div className="fixed inset-0 bg-black/20 bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between rounded-t-xl">
+              <div className="flex items-center gap-3">
+                <span className="text-4xl">{selectedFacility.icon}</span>
+                <div>
+                  <h3 className="text-xl font-semibold text-gray-900">
+                    {selectedFacility.name}
+                  </h3>
                   <button
-                    className="toggle-btn"
-                    onClick={() => toggleFacility(facilityType.id)}
+                    className={`mt-1 flex items-center gap-1.5 text-sm font-medium transition-colors ${
+                      facilities[selectedFacility.id]?.enabled
+                        ? "text-emerald-600 hover:text-emerald-700"
+                        : "text-red-600 hover:text-red-700"
+                    }`}
+                    onClick={() =>
+                      updateFacility(
+                        selectedFacility.id,
+                        "enabled",
+                        !facilities[selectedFacility.id]?.enabled
+                      )
+                    }
                   >
-                    {isEnabled ? (
-                      <FiToggleRight size={24} color="#10b981" />
+                    {facilities[selectedFacility.id]?.enabled ? (
+                      <>
+                        <FiToggleRight size={20} /> Enabled
+                      </>
                     ) : (
-                      <FiToggleLeft size={24} color="#6b7280" />
+                      <>
+                        <FiToggleLeft size={20} /> Disabled
+                      </>
                     )}
                   </button>
                 </div>
+              </div>
+              <button
+                onClick={() => setSelectedFacility(null)}
+                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <FiX size={20} />
+              </button>
+            </div>
 
-                {/* Facility Configuration */}
-                {isEnabled && (
-                  <div
-                    className="facility-config"
-                    style={{ marginTop: "20px", paddingTop: "20px" }}
-                  >
-                    <div
-                      className="config-row"
-                      style={{ gap: "16px", marginBottom: "16px" }}
-                    >
-                      {/* Quantity */}
-                      <div className="config-item">
-                        <label
-                          className="label"
-                          style={{ marginBottom: "6px", display: "block" }}
-                        >
+            {/* Modal Body */}
+            <div className="px-6 py-6 space-y-6">
+              {(() => {
+                const config = facilities[selectedFacility.id] || {};
+
+                return (
+                  <>
+                    {/* Quantity & Capacity */}
+                    <div className="grid grid-cols-2 gap-6">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-3">
                           Quantity
                         </label>
-                        <div className="counter">
+                        <div className="flex items-center gap-3">
                           <button
-                            className="counter-btn"
-                            onClick={() => adjustQuantity(facilityType.id, -1)}
+                            className="p-2 rounded-lg bg-gray-200 hover:bg-gray-300 transition-colors"
+                            onClick={() =>
+                              adjustQuantity(selectedFacility.id, -1)
+                            }
                           >
-                            <FiMinus />
+                            <FiMinus size={18} />
                           </button>
-                          <span className="counter-value">
+                          <span className="w-12 text-center text-lg font-semibold text-gray-900">
                             {config.quantity}
                           </span>
                           <button
-                            className="counter-btn"
-                            onClick={() => adjustQuantity(facilityType.id, 1)}
+                            className="p-2 rounded-lg bg-gray-200 hover:bg-gray-300 transition-colors"
+                            onClick={() =>
+                              adjustQuantity(selectedFacility.id, 1)
+                            }
                           >
-                            <FiPlus />
+                            <FiPlus size={18} />
                           </button>
                         </div>
                       </div>
 
-                      {/* Max Capacity */}
-                      <div className="config-item">
-                        <label
-                          className="label"
-                          style={{ marginBottom: "6px", display: "block" }}
-                        >
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-3">
                           Max Capacity
                         </label>
-                        <div className="counter">
+                        <div className="flex items-center gap-3">
                           <button
-                            className="counter-btn"
-                            onClick={() => adjustCapacity(facilityType.id, -1)}
+                            className="p-2 rounded-lg bg-gray-200 hover:bg-gray-300 transition-colors"
+                            onClick={() =>
+                              adjustCapacity(selectedFacility.id, -1)
+                            }
                           >
-                            <FiMinus />
+                            <FiMinus size={18} />
                           </button>
-                          <span className="counter-value">
+                          <span className="w-12 text-center text-lg font-semibold text-gray-900">
                             {config.maxCapacity}
                           </span>
                           <button
-                            className="counter-btn"
-                            onClick={() => adjustCapacity(facilityType.id, 1)}
+                            className="p-2 rounded-lg bg-gray-200 hover:bg-gray-300 transition-colors"
+                            onClick={() =>
+                              adjustCapacity(selectedFacility.id, 1)
+                            }
                           >
-                            <FiPlus />
+                            <FiPlus size={18} />
                           </button>
                         </div>
                       </div>
-
-                      {/* Payment Toggle */}
-                      <div className="config-item">
-                        <label
-                          className="label"
-                          style={{ marginBottom: "8px", display: "block" }}
-                        >
-                          Payment
-                        </label>
-                        <button
-                          className="payment-toggle"
-                          onClick={() =>
-                            updateFacility(
-                              facilityType.id,
-                              "isPaid",
-                              !config.isPaid
-                            )
-                          }
-                        >
-                          <span
-                            className={`payment-status ${
-                              config.isPaid ? "paid" : "free"
-                            }`}
-                          >
-                            {config.isPaid ? (
-                              <>
-                                <FiDollarSign size={14} />
-                                Paid
-                              </>
-                            ) : (
-                              "Free"
-                            )}
-                          </span>
-                        </button>
-                      </div>
                     </div>
 
-                    {/* Price Configuration (if paid) */}
-                    {config.isPaid && (
-                      <div
-                        className="config-row"
-                        style={{ marginTop: "16px", gap: "16px" }}
+                    {/* Payment Toggle */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-3">
+                        Payment Type
+                      </label>
+                      <button
+                        className={`px-4 py-2 rounded-lg font-medium transition-colors border ${
+                          config.isPaid
+                            ? "bg-emerald-100 text-emerald-700 border-emerald-300"
+                            : "bg-gray-100 text-gray-700 border-gray-300"
+                        }`}
+                        onClick={() =>
+                          updateFacility(
+                            selectedFacility.id,
+                            "isPaid",
+                            !config.isPaid
+                          )
+                        }
                       >
-                        <div className="config-item">
-                          <label
-                            className="label"
-                            style={{ marginBottom: "8px", display: "block" }}
-                          >
+                        {config.isPaid ? (
+                          <span className="flex items-center gap-1.5">
+                            <FiDollarSign size={18} /> Paid
+                          </span>
+                        ) : (
+                          "Free"
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Price Configuration */}
+                    {config.isPaid && (
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
                             Price
                           </label>
                           <input
                             type="number"
-                            className="input"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                             value={config.price}
                             onChange={(e) =>
                               updateFacility(
-                                facilityType.id,
+                                selectedFacility.id,
                                 "price",
                                 parseFloat(e.target.value) || 0
                               )
                             }
-                            placeholder="0.00"
-                            min="0"
-                            step="0.01"
                           />
                         </div>
-                        <div className="config-item">
-                          <label
-                            className="label"
-                            style={{ marginBottom: "8px", display: "block" }}
-                          >
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
                             Price Type
                           </label>
                           <select
-                            className="select"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent appearance-none bg-white"
                             value={config.priceType}
                             onChange={(e) =>
                               updateFacility(
-                                facilityType.id,
+                                selectedFacility.id,
                                 "priceType",
                                 e.target.value
                               )
@@ -520,104 +532,84 @@ export default function Community() {
                     )}
 
                     {/* Operating Hours */}
-                    <div className="config-row" style={{ marginTop: "16px" }}>
-                      <div className="config-item">
-                        <label
-                          className="label"
-                          style={{ marginBottom: "8px", display: "block" }}
-                        >
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
                           Start Time
                         </label>
                         <select
-                          className="select"
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent appearance-none bg-white"
                           value={config.operatingHours.split("-")[0] || "09:00"}
                           onChange={(e) => {
-                            const endTime =
+                            const end =
                               config.operatingHours.split("-")[1] || "21:00";
                             updateFacility(
-                              facilityType.id,
+                              selectedFacility.id,
                               "operatingHours",
-                              `${e.target.value}-${endTime}`
+                              `${e.target.value}-${end}`
                             );
                           }}
                         >
                           <option value="06:00">06:00 AM</option>
-                          <option value="07:00">07:00 AM</option>
                           <option value="08:00">08:00 AM</option>
                           <option value="09:00">09:00 AM</option>
                           <option value="10:00">10:00 AM</option>
                           <option value="11:00">11:00 AM</option>
-                          <option value="12:00">12:00 PM</option>
                         </select>
                       </div>
-                      <div className="config-item">
-                        <label
-                          className="label"
-                          style={{ marginBottom: "8px", display: "block" }}
-                        >
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
                           End Time
                         </label>
                         <select
-                          className="select"
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent appearance-none bg-white"
                           value={config.operatingHours.split("-")[1] || "21:00"}
                           onChange={(e) => {
-                            const startTime =
+                            const start =
                               config.operatingHours.split("-")[0] || "09:00";
                             updateFacility(
-                              facilityType.id,
+                              selectedFacility.id,
                               "operatingHours",
-                              `${startTime}-${e.target.value}`
+                              `${start}-${e.target.value}`
                             );
                           }}
                         >
-                          <option value="13:00">01:00 PM</option>
-                          <option value="14:00">02:00 PM</option>
-                          <option value="15:00">03:00 PM</option>
-                          <option value="16:00">04:00 PM</option>
                           <option value="17:00">05:00 PM</option>
                           <option value="18:00">06:00 PM</option>
                           <option value="19:00">07:00 PM</option>
                           <option value="20:00">08:00 PM</option>
                           <option value="21:00">09:00 PM</option>
-                          <option value="22:00">10:00 PM</option>
-                          <option value="23:00">11:00 PM</option>
                         </select>
                       </div>
                     </div>
 
                     {/* Rules */}
-                    <div className="config-row" style={{ marginTop: "16px" }}>
-                      <div className="config-item full-width">
-                        <label
-                          className="label"
-                          style={{ marginBottom: "8px", display: "block" }}
-                        >
-                          Rules & Guidelines (Optional)
-                        </label>
-                        <textarea
-                          className="textarea"
-                          value={config.rules}
-                          onChange={(e) =>
-                            updateFacility(
-                              facilityType.id,
-                              "rules",
-                              e.target.value
-                            )
-                          }
-                          placeholder="Specific rules for this facility..."
-                          rows={2}
-                        />
-                      </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Rules & Guidelines
+                      </label>
+                      <textarea
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
+                        rows={3}
+                        placeholder="Specific rules for this facility..."
+                        value={config.rules}
+                        onChange={(e) =>
+                          updateFacility(
+                            selectedFacility.id,
+                            "rules",
+                            e.target.value
+                          )
+                        }
+                      />
                     </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                  </>
+                );
+              })()}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Toast Container */}
       <ToastContainer toasts={toasts} onClose={removeToast} />
     </div>
   );

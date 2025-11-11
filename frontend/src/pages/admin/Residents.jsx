@@ -8,8 +8,8 @@ import {
   FiX,
   FiMail,
   FiCalendar,
-  FiClock,
   FiHome,
+  FiClock,
 } from "react-icons/fi";
 import { getToken, getUser } from "../../lib/auth";
 import { ToastContainer, useToast } from "../../components/Toast";
@@ -19,101 +19,83 @@ function ResidentCard({ resident, onAction, showActions = false }) {
     switch (status?.toUpperCase()) {
       case "APPROVED":
         return (
-          <span
-            className="badge"
-            style={{
-              background: "#dcfce7",
-              color: "#16a34a",
-              border: "1px solid #bbf7d0",
-            }}
-          >
+          <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-700 border border-green-200">
             Approved
           </span>
         );
       case "PENDING":
         return (
-          <span
-            className="badge"
-            style={{
-              background: "#fef3c7",
-              color: "#d97706",
-              border: "1px solid #fde68a",
-            }}
-          >
+          <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-amber-100 text-amber-700 border border-amber-200">
             Pending
           </span>
         );
       case "REJECTED":
         return (
-          <span
-            className="badge"
-            style={{
-              background: "#fee2e2",
-              color: "#dc2626",
-              border: "1px solid #fecaca",
-            }}
-          >
+          <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-red-100 text-red-600 border border-red-200">
             Rejected
           </span>
         );
       default:
-        return <span className="badge">Unknown</span>;
+        return (
+          <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-700 border border-gray-200">
+            Unknown
+          </span>
+        );
     }
   };
 
   return (
-    <div className="card" style={{ marginBottom: "12px" }}>
-      <div className="list-row">
-        <div style={{ flex: 1 }}>
-          <div className="list-title">{resident.name}</div>
-          <div className="list-sub">
-            <FiMail style={{ display: "inline", marginRight: "4px" }} />
-            {resident.email}
+    <div className="bg-white rounded-lg border border-gray-200 p-4 mb-3 hover:shadow-md transition-shadow">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="text-lg font-semibold text-gray-900 mb-2">
+            {resident.name}
+          </div>
+          <div className="flex items-center text-sm text-gray-600 mb-1">
+            <FiMail className="inline mr-1.5 flex-shrink-0" />
+            <span className="truncate">{resident.email}</span>
           </div>
           {(resident.block || resident.unit) && (
-            <div className="list-sub">
-              <FiHome style={{ display: "inline", marginRight: "4px" }} />
-              {resident.block && `Block ${resident.block.name}`}
-              {resident.block && resident.unit && " - "}
-              {resident.unit && `Unit ${resident.unit.number}`}
-              {!resident.block && !resident.unit && "No block/unit assigned"}
+            <div className="flex items-center text-sm text-gray-600 mb-1">
+              <FiHome className="inline mr-1.5 flex-shrink-0" />
+              <span>
+                {resident.block && `Block ${resident.block.name}`}
+                {resident.block && resident.unit && " - "}
+                {resident.unit && `Unit ${resident.unit.number}`}
+                {!resident.block && !resident.unit && "No block/unit assigned"}
+              </span>
             </div>
           )}
-          <div className="list-sub">
-            <FiCalendar style={{ display: "inline", marginRight: "4px" }} />
+          <div className="flex items-center text-sm text-gray-600">
+            <FiCalendar className="inline mr-1.5 flex-shrink-0" />
             Joined: {new Date(resident.createdAt).toLocaleDateString()}
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+        <div className="flex items-center gap-3 flex-shrink-0">
           {getStatusBadge(resident.status)}
           {showActions && resident.status === "PENDING" && (
-            <div style={{ display: "flex", gap: "8px" }}>
+            <div className="flex gap-2">
               <button
-                className="btn ghost"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-green-600 hover:bg-green-50 rounded-lg transition-colors"
                 onClick={() => onAction(resident.id, "approve")}
-                style={{ color: "#22c55e", padding: "6px 12px" }}
               >
                 <FiCheck /> Approve
               </button>
               <button
-                className="btn ghost"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                 onClick={() => onAction(resident.id, "reject")}
-                style={{ color: "#ef4444", padding: "6px 12px" }}
               >
                 <FiX /> Reject
               </button>
             </div>
           )}
           {showActions && resident.status === "REJECTED" && (
-            <div style={{ display: "flex", gap: "8px" }}>
-              <button
-                className="btn ghost"
-                onClick={() => onAction(resident.id, "approve")}
-                style={{ color: "#22c55e", padding: "6px 12px" }}
-              >
-                <FiCheck /> Approve
-              </button>
-            </div>
+            <button
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+              onClick={() => onAction(resident.id, "approve")}
+            >
+              <FiCheck /> Approve
+            </button>
           )}
         </div>
       </div>
@@ -121,16 +103,21 @@ function ResidentCard({ resident, onAction, showActions = false }) {
   );
 }
 
-function StatCard({ icon, title, value, color = "#6366f1" }) {
+function StatCard({ icon, title, value, color = "indigo" }) {
+  const colorClasses = {
+    indigo: "bg-indigo-100 text-indigo-600",
+    amber: "bg-amber-100 text-amber-600",
+    green: "bg-green-100 text-green-600",
+    red: "bg-red-100 text-red-600",
+  };
+
   return (
-    <div className="stat-card">
-      <div className="stat-top">
-        <div className="stat-icon" style={{ background: `${color}20`, color }}>
-          {icon}
-        </div>
-        <div className="stat-title">{title}</div>
+    <div className="bg-white rounded-xl p-6 border border-gray-200 hover:shadow-lg transition-shadow">
+      <div className="flex items-start justify-between mb-4">
+        <div className={`p-3 rounded-lg ${colorClasses[color]}`}>{icon}</div>
+        <div className="text-sm font-medium text-gray-600">{title}</div>
       </div>
-      <div className="stat-value">{value}</div>
+      <div className="text-3xl font-bold text-gray-900">{value}</div>
     </div>
   );
 }
@@ -140,7 +127,6 @@ export default function Residents() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("all");
 
-  // Toast management using custom hook
   const { toasts, addToast, removeToast } = useToast();
 
   const url = import.meta.env.VITE_API_URL || "http://localhost:5000";
@@ -186,7 +172,6 @@ export default function Residents() {
         }
       );
 
-      // Show success toast
       if (action === "approve") {
         addToast(
           "success",
@@ -237,58 +222,51 @@ export default function Residents() {
 
   if (loading) {
     return (
-      <div className="modern-content">
-        <div style={{ textAlign: "center", padding: "40px" }}>
-          <div>Loading residents...</div>
+      <div className="max-w-7xl mx-auto px-4 py-8">
+        <div className="text-center py-10">
+          <div className="text-gray-600">Loading residents...</div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="modern-content">
-      <h2
-        style={{
-          marginBottom: 24,
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-        }}
-      >
+    <div className="max-w-7xl mx-auto p-4">
+      <h2 className="text-2xl p-2 font-bold text-gray-900 mb-6 flex items-center gap-2.5">
         <FiUsers /> Residents Management
       </h2>
 
       {/* Stats Cards */}
-      <div className="dash-grid" style={{ marginBottom: 24 }}>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
         <StatCard
-          icon={<FiUsers />}
+          icon={<FiUsers size={24} />}
           title="Total Residents"
           value={stats.total}
-          color="#6366f1"
+          color="indigo"
         />
         <StatCard
-          icon={<FiClock />}
+          icon={<FiClock size={24} />}
           title="Pending Approval"
           value={stats.pending}
-          color="#f59e0b"
+          color="amber"
         />
         <StatCard
-          icon={<FiUserCheck />}
+          icon={<FiUserCheck size={24} />}
           title="Approved"
           value={stats.approved}
-          color="#10b981"
+          color="green"
         />
         <StatCard
-          icon={<FiUserX />}
+          icon={<FiUserX size={24} />}
           title="Rejected"
           value={stats.rejected}
-          color="#ef4444"
+          color="red"
         />
       </div>
 
       {/* Filter Tabs */}
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+      <div className="mb-5">
+        <div className="flex gap-3 flex-wrap">
           {[
             { key: "all", label: "All Residents", count: stats.total },
             { key: "pending", label: "Pending", count: stats.pending },
@@ -297,48 +275,59 @@ export default function Residents() {
           ].map((tab) => (
             <button
               key={tab.key}
-              className={`pill ${activeTab === tab.key ? "active" : ""}`}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                activeTab === tab.key
+                  ? "bg-indigo-600 text-white"
+                  : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
+              }`}
               onClick={() => setActiveTab(tab.key)}
             >
               {tab.label}
-              {tab.count > 0 && <span className="badge">{tab.count}</span>}
+              {tab.count > 0 && (
+                <span
+                  className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-xs font-semibold ${
+                    activeTab === tab.key
+                      ? "bg-indigo-500 text-white"
+                      : "bg-gray-200 text-gray-700"
+                  }`}
+                >
+                  {tab.count}
+                </span>
+              )}
             </button>
           ))}
         </div>
       </div>
 
       {/* Residents List */}
-      <div className="card">
-        <div className="section-header">
-          <div className="section-left">
-            <div className="section-icon">
-              <FiUsers />
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg">
+              <FiUsers size={20} />
             </div>
-            <h3>
+            <h3 className="text-lg font-semibold text-gray-900">
               {activeTab === "all" && "All Residents"}
               {activeTab === "pending" && "Pending Approvals"}
               {activeTab === "approved" && "Approved Residents"}
               {activeTab === "rejected" && "Rejected Applications"}
             </h3>
           </div>
-          <div style={{ color: "#6b7280", fontSize: "14px" }}>
+          <div className="text-sm text-gray-600">
             {filteredResidents.length} resident
             {filteredResidents.length !== 1 ? "s" : ""}
           </div>
         </div>
 
         {filteredResidents.length === 0 ? (
-          <div
-            className="empty"
-            style={{ textAlign: "center", padding: "40px" }}
-          >
+          <div className="text-center py-10 text-gray-500">
             {activeTab === "all" && "No residents found."}
             {activeTab === "pending" && "No pending approvals."}
             {activeTab === "approved" && "No approved residents."}
             {activeTab === "rejected" && "No rejected applications."}
           </div>
         ) : (
-          <div style={{ marginTop: "16px" }}>
+          <div className="p-4">
             {filteredResidents.map((resident) => (
               <ResidentCard
                 key={resident.id}

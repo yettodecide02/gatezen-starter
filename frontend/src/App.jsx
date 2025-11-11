@@ -1,39 +1,29 @@
-import { Routes, Route, NavLink, useNavigate } from "react-router-dom";
-import {
-  FiHome,
-  FiDollarSign,
-  FiTool,
-  FiCalendar,
-  FiUsers,
-  FiFileText,
-  FiUser,
-  FiShield,
-  FiLogOut,
-  FiHelpCircle,
-  FiBell,
-  FiSettings,
-} from "react-icons/fi";
+import { Routes, Route } from "react-router-dom";
 
 import ProtectedRoute from "./ProtectedRoute";
-import { clearUser, isAdmin } from "./lib/auth";
 
-import Login from "./pages/Login.jsx";
-import Register from "./pages/Register.jsx";
-import Dashboard from "./pages/Dashboard.jsx";
-import Payments from "./pages/Payments.jsx";
-import Maintenance from "./pages/Maintenance.jsx";
-import Bookings from "./pages/Bookings.jsx";
-import Visitors from "./pages/Visitors.jsx";
-import Documents from "./pages/Documents.jsx";
-import Profile from "./pages/Profile.jsx";
+// Resident Pages
+import Login from "./pages/auth/Login.jsx";
+import Register from "./pages/auth/Register.jsx";
+import Dashboard from "./pages/resident/Dashboard.jsx";
+import Payments from "./pages/resident/Payments.jsx";
+import Maintenance from "./pages/resident/Maintenance.jsx";
+import Bookings from "./pages/resident/Bookings.jsx";
+import Visitors from "./pages/resident/Visitors.jsx";
+import Documents from "./pages/resident/Documents.jsx";
+import Profile from "./pages/resident/Profile.jsx";
+import Help from "./pages/resident/Help.jsx";
+import AuthCallback from "./pages/auth/AuthCallback.jsx";
+import PendingApproval from "./pages/auth/PendingApproval.jsx";
+import ForgotPassword from "./pages/auth/ForgotPassword.jsx";
+import ResidentDetailsForm from "./pages/auth/ResidentDetailsForm.jsx";
+import MyPackages from "./pages/resident/MyPackages.jsx";
+
+
+// Admin Pages
 import AdminDashboard from "./pages/admin/AdminDashboard.jsx";
 import AdminSignup from "./pages/admin/AdminSignup.jsx";
 import Residents from "./pages/admin/Residents.jsx";
-import Help from "./pages/Help.jsx";
-import AuthCallback from "./pages/AuthCallback.jsx";
-import PendingApproval from "./pages/PendingApproval.jsx";
-import supabase from "./lib/supabase.js";
-import ForgotPassword from "./pages/ForgotPassword.jsx";
 import Announcements from "./pages/admin/Announcements.jsx";
 import Community from "./pages/admin/Community.jsx";
 import Blocks from "./pages/admin/Blocks.jsx";
@@ -41,180 +31,21 @@ import MaintenanceAdmin from "./pages/admin/Maintenance.jsx";
 import BookingsAdmin from "./pages/admin/Bookings.jsx";
 import PaymentsAdmin from "./pages/admin/Payments.jsx";
 import CreateStaff from "./pages/admin/CreateStaff.jsx";
+import VisitorsLog from "./pages/admin/VisitorsLog.jsx";
 
-function Shell({ children }) {
-  const navigate = useNavigate();
-  const logout = async () => {
-    await supabase.auth.signOut();
-    clearUser();
-    navigate("/");
-  };
+// Gatekeeper Pages
+import GateDashboard from "./pages/gatekeeper/GateDashboard.jsx";
+import QRScanner from "./pages/gatekeeper/QRScanner.jsx";
+import GateProfile from "./pages/gatekeeper/GateProfile.jsx";
+import Packages from "./pages/gatekeeper/Packages.jsx";
 
-  const Item = ({ to, icon, label }) => (
-    <NavLink
-      to={to}
-      className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
-    >
-      <span className="icon">{icon}</span>
-      <span className="label">{label}</span>
-    </NavLink>
-  );
+import PageNotAvalible from "./pages/auth/PageNotAvalible.jsx";
 
-  const showAdmin = isAdmin();
+import Shell from "./shells/Shell.jsx";
+import AdminShell from "./shells/AdminShell.jsx";
+import GatekeeperShell from "./shells/GatekeeperShell.jsx";
 
-  return (
-    <div className="app-shell">
-      <aside
-        className="sidebar-modern"
-        style={{ maxHeight: "100vh", overflowY: "auto" }}
-      >
-        <div className="sidebar-main">
-          <div className="brand-row">
-            <div className="brand-mark">GZ</div>
-            <div className="brand-text">
-              <div className="brand-title">GateZen</div>
-              <div className="brand-sub">Community Portal</div>
-            </div>
-          </div>
-          <nav className="nav-list">
-            <Item to="/dashboard" icon={<FiHome />} label="Dashboard" />
-            <Item to="/payments" icon={<FiDollarSign />} label="Payments" />
-            <Item to="/maintenance" icon={<FiTool />} label="Maintenance" />
-            <Item to="/bookings" icon={<FiCalendar />} label="Bookings" />
-            <Item to="/visitors" icon={<FiUsers />} label="Visitors" />
-            <Item to="/documents" icon={<FiFileText />} label="Documents" />
-            <Item to="/profile" icon={<FiUser />} label="Profile" />
-            <Item to="/help" icon={<FiHelpCircle />} label="Help" />
-          </nav>
-          <button className="logout-btn" onClick={logout}>
-            <FiLogOut /> <span>Logout</span>
-          </button>
-        </div>
-      </aside>
-
-      <main className="main-area">
-        <header className="header-modern">
-          <div className="header-title">Apartment Community App</div>
-          <div className="user-chip">
-            <div className="avatar">A</div>
-            <div className="meta">
-              <div className="name">Signed In</div>
-              <div className="role">
-                {showAdmin ? "Administrator" : "Resident"}
-              </div>
-            </div>
-          </div>
-        </header>
-        <div className="content modern-content">{children}</div>
-      </main>
-    </div>
-  );
-}
-
-function AdminShell({ children }) {
-  const navigate = useNavigate();
-  const logout = async () => {
-    await supabase.auth.signOut();
-    clearUser();
-    navigate("/");
-  };
-
-  const AdminItem = ({ to, icon, label, end = false }) => (
-    <NavLink
-      to={to}
-      end={end}
-      className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
-    >
-      <span className="icon">{icon}</span>
-      <span className="label">{label}</span>
-    </NavLink>
-  );
-
-  return (
-    <div className="app-shell">
-      <aside
-        className="sidebar-modern"
-        style={{ maxHeight: "100vh", overflowY: "auto" }}
-      >
-        <div className="sidebar-main">
-          <div className="brand-row">
-            <div className="brand-mark">GZ</div>
-            <div className="brand-text">
-              <div className="brand-title">GateZen</div>
-              <div className="brand-sub">Admin Portal</div>
-            </div>
-          </div>
-          <nav className="nav-list">
-            <AdminItem
-              to="/admin"
-              icon={<FiHome />}
-              label="Dashboard"
-              end={true}
-            />
-            <AdminItem
-              to="/admin/residents"
-              icon={<FiUsers />}
-              label="Residents"
-            />
-            <AdminItem
-              to="/admin/announcements"
-              icon={<FiBell />}
-              label="Announcements"
-            />
-            <AdminItem
-              to="/admin/maintenance"
-              icon={<FiTool />}
-              label="Maintenance"
-            />
-            <AdminItem
-              to="/admin/bookings"
-              icon={<FiCalendar />}
-              label="Bookings"
-            />
-            <AdminItem
-              to="/admin/payments"
-              icon={<FiDollarSign />}
-              label="Payments"
-            />
-            <AdminItem
-              to="/admin/blocks"
-              icon={<FiHome />}
-              label="Blocks & Units"
-            />
-            <AdminItem
-              to="/admin/create-staff"
-              icon={<FiShield />}
-              label="Create Staff"
-            />
-            <AdminItem
-              to="/admin/community"
-              icon={<FiSettings />}
-              label="Community"
-            />
-            <div className="nav-divider" />
-          </nav>
-          <button className="logout-btn" onClick={logout}>
-            <FiLogOut /> <span>Logout</span>
-          </button>
-        </div>
-      </aside>
-
-      <main className="main-area">
-        <header className="header-modern">
-          <div className="header-title">Admin Dashboard</div>
-          <div className="user-chip">
-            <div className="avatar">A</div>
-            <div className="meta">
-              <div className="name">Administrator</div>
-              <div className="role">Admin Portal</div>
-            </div>
-          </div>
-        </header>
-        <div className="content modern-content">{children}</div>
-      </main>
-    </div>
-  );
-}
+/* ----------------------------- MAIN APP ROUTES ----------------------------- */
 
 export default function App() {
   return (
@@ -222,6 +53,7 @@ export default function App() {
       {/* Public */}
       <Route path="/" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/resident-from" element={<ResidentDetailsForm />} />
       <Route path="/admin-signup" element={<AdminSignup />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/pending" element={<PendingApproval />} />
@@ -235,7 +67,6 @@ export default function App() {
         }
       />
 
-      {/* Protected (any authenticated user) */}
       <Route
         path="/dashboard"
         element={
@@ -287,6 +118,16 @@ export default function App() {
         }
       />
       <Route
+        path="/packages"
+        element={
+          <ProtectedRoute>
+            <Shell>
+              <MyPackages />
+            </Shell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/documents"
         element={
           <ProtectedRoute>
@@ -307,7 +148,6 @@ export default function App() {
         }
       />
 
-      {/* Admin-only */}
       <Route
         path="/admin"
         element={
@@ -359,6 +199,16 @@ export default function App() {
         }
       />
       <Route
+        path="/admin/visitors-log"
+        element={
+          <ProtectedRoute>
+            <AdminShell>
+              <VisitorsLog />
+            </AdminShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/admin/payments"
         element={
           <ProtectedRoute>
@@ -398,6 +248,49 @@ export default function App() {
           </ProtectedRoute>
         }
       />
+
+      <Route
+        path="/gatekeeper"
+        element={
+          <ProtectedRoute>
+            <GatekeeperShell>
+              <GateDashboard />
+            </GatekeeperShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/gatekeeper/qrscanner"
+        element={
+          <ProtectedRoute>
+            <GatekeeperShell>
+              <QRScanner />
+            </GatekeeperShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/gatekeeper/profile"
+        element={
+          <ProtectedRoute>
+            <GatekeeperShell>
+              <GateProfile />
+            </GatekeeperShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/gatekeeper/packages"
+        element={
+          <ProtectedRoute>
+            <GatekeeperShell>
+              <Packages />
+            </GatekeeperShell>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route path="/*" element={<PageNotAvalible />} />
     </Routes>
   );
 }

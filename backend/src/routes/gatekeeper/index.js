@@ -5,7 +5,6 @@ import nodemailer from "nodemailer";
 
 const router = express.Router();
 
-// Apply auth middleware first, then check role
 router.use(authMiddleware);
 router.use(checkAuth);
 
@@ -73,7 +72,6 @@ router.get("/", async (req, res) => {
       hostName: visitor.user?.name || "Unknown",
       unitNumber: visitor.user?.unit?.number || "N/A",
       blockName: visitor.user?.unit?.block?.name || "N/A",
-      // Determine status based on check-in/out times
       status: visitor.checkOutAt
         ? "checked_out"
         : visitor.checkInAt
@@ -613,6 +611,149 @@ router.get("/current", async (req, res) => {
   } catch (error) {
     console.error("Error fetching current visitors:", error);
     res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.get("/packages", async (req, res) => {
+  const { communityId } = req.query;
+
+  if (!communityId)
+    return res.status(400).json({ error: "communityId required" });
+
+  try {
+    const result = await prisma.packages.findMany({
+      where: {
+        communityId: communityId,
+        status: "PENDING",
+      },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        image: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            unit: {
+              select: {
+                number: true,
+                block: {
+                  select: {
+                    name: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    res.status(200).send(result);
+  } catch (e) {
+    console.error(e);
+    res.status(400).json({ error: e.message });
+  }
+});
+
+router.post("/packages", async (req, res) => {
+  const { userId, communityId, image, name } = req.body;
+
+  if (!userId || !communityId)
+    return res.status(400).json({ error: "communityId and userId required" });
+  if (!name || !image)
+    return res.status(400).json({ error: "name and image required" });
+  try {
+    const result = await prisma.packages.create({
+      data: {
+        userId: userId,
+        name: name,
+        communityId: communityId,
+        image: image,
+      },
+    });
+    res.status(200).json({ status: "success" });
+  } catch (e) {
+    console.error(e);
+    res.status(400).json({ error: e.message });
+  }
+});
+
+router.put("/packages/:id", async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+
+  if (!status) return res.status(400).json({ error: "status is required" });
+
+  try {
+    const updated = await prisma.packages.update({
+      where: { id: id },
+      data: { status },
+      select: {
+        image: true,
+        name: true,
+        user: {
+          select: {
+            name: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    const base64Data = updated.image.includes("base64,") ? updated.image.split("base64,")[1] : updated.image;
+
+    await transporter.sendMail({
+      from: process.env.EMAIL_ID,
+      to: updated.user.email,
+      subject: `Your ${updated.name} package has been picked`,
+      text: `Your ${updated.name} package has been picked`,
+      attachments: [
+        {
+          filename: "package.jpg",
+          content: base64Data,
+          encoding: "base64",
+        },
+      ],
+    });
+    res.status(200).json({ status: "success", data: updated });
+  } catch (e) {
+    console.error(e);
+    res.status(400).json({ error: e.message });
+  }
+});
+
+router.get("/residents", async (req, res) => {
+  const { communityId } = req.query;
+  if (!communityId)
+    return res.status(400).json({ error: "communityId required" });
+  try {
+    const users = await prisma.user.findMany({
+      where: {
+        communityId: communityId,
+        role: "RESIDENT",
+        status: "APPROVED",
+      },
+      select: {
+        id: true,
+        name: true,
+        unit: {
+          select: {
+            number: true,
+            block: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    res.status(200).json(users);
+  } catch (e) {
+    console.error("error", e);
+    res.status(400).json({ error: e.message });
   }
 });
 

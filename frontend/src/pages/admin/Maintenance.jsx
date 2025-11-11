@@ -3,11 +3,12 @@ import {
   FiTool,
   FiClock,
   FiCheckCircle,
-  FiXCircle,
   FiUser,
   FiCalendar,
   FiMail,
   FiAlertCircle,
+  FiMapPin,
+  FiTag,
 } from "react-icons/fi";
 import axios from "axios";
 import { getToken, getUser } from "../../lib/auth";
@@ -18,21 +19,41 @@ const url = import.meta.env.VITE_API_URL || "http://localhost:5000";
 const STATUS_CONFIG = {
   SUBMITTED: {
     icon: FiClock,
-    color: "#f59e0b",
-    bg: "#fef3c7",
-    label: "submitted",
+    color: "amber",
+    label: "Submitted",
   },
   IN_PROGRESS: {
     icon: FiTool,
-    color: "#3b82f6",
-    bg: "#dbeafe",
+    color: "blue",
     label: "In Progress",
   },
   RESOLVED: {
     icon: FiCheckCircle,
-    color: "#10b981",
-    bg: "#d1fae5",
+    color: "green",
     label: "Resolved",
+  },
+};
+
+const PRIORITY_CONFIG = {
+  LOW: {
+    bg: "bg-gray-100",
+    text: "text-gray-700",
+    border: "border-gray-200",
+  },
+  MEDIUM: {
+    bg: "bg-yellow-100",
+    text: "text-yellow-700",
+    border: "border-yellow-200",
+  },
+  HIGH: {
+    bg: "bg-orange-100",
+    text: "text-orange-700",
+    border: "border-orange-200",
+  },
+  URGENT: {
+    bg: "bg-red-100",
+    text: "text-red-700",
+    border: "border-red-200",
   },
 };
 
@@ -42,9 +63,7 @@ export default function Maintenance() {
   const [filterStatus, setFilterStatus] = useState("ALL");
   const [updateLoading, setUpdateLoading] = useState({});
 
-  // Toast management using custom hook
   const { toasts, addToast, removeToast } = useToast();
-
   const token = getToken();
 
   // Fetch all maintenance requests
@@ -82,7 +101,7 @@ export default function Maintenance() {
     setUpdateLoading((prev) => ({ ...prev, [ticketId]: true }));
 
     try {
-      const response = await axios.post(
+      await axios.post(
         `${url}/admin/maintenance/update`,
         {
           ticketId,
@@ -95,7 +114,6 @@ export default function Maintenance() {
         }
       );
 
-      // Update the maintenance request in the list
       setMaintenance((prev) =>
         prev.map((item) =>
           item.id === ticketId ? { ...item, status: newStatus } : item
@@ -149,58 +167,109 @@ export default function Maintenance() {
     fetchMaintenance();
   }, []);
 
+  const getStatusColorClasses = (status) => {
+    const colorMap = {
+      SUBMITTED: {
+        bg: "bg-amber-100",
+        text: "text-amber-700",
+        border: "border-amber-200",
+      },
+      IN_PROGRESS: {
+        bg: "bg-blue-100",
+        text: "text-blue-700",
+        border: "border-blue-200",
+      },
+      RESOLVED: {
+        bg: "bg-green-100",
+        text: "text-green-700",
+        border: "border-green-200",
+      },
+    };
+    return (
+      colorMap[status] || {
+        bg: "bg-gray-100",
+        text: "text-gray-700",
+        border: "border-gray-200",
+      }
+    );
+  };
+
+  const getStatusButtonClasses = (status) => {
+    const colorMap = {
+      SUBMITTED: "text-amber-600 hover:bg-amber-50 border-amber-200",
+      IN_PROGRESS: "text-blue-600 hover:bg-blue-50 border-blue-200",
+      RESOLVED: "text-green-600 hover:bg-green-50 border-green-200",
+    };
+    return colorMap[status] || "text-gray-600 hover:bg-gray-50 border-gray-200";
+  };
+
   return (
-    <div className="modern-content">
+    <div className="max-w-7xl mx-auto p-4">
       {/* Header */}
-      <div className="section-header">
-        <div className="section-left">
-          <div className="section-icon">
-            <FiTool />
+      <div className="mb-6">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="p-2 rounded-lg">
+            <FiTool size={24} />
           </div>
           <div>
-            <h2>Maintenance Requests</h2>
-            <p className="muted">Manage community maintenance and repairs</p>
+            <h2 className="text-2xl font-bold text-gray-900">
+              Maintenance Requests
+            </h2>
+            <p className="text-sm text-gray-600">
+              Manage community maintenance and repairs
+            </p>
           </div>
         </div>
       </div>
 
       {/* Status Filter Pills */}
-      <div className="modern-card maintenance-spacing">
-        <div className="filter-pills">
-          {Object.entries(statusCounts).map(([status, count]) => (
-            <button
-              key={status}
-              onClick={() => setFilterStatus(status)}
-              className={`filter-pill ${
-                filterStatus === status ? "active" : ""
-              }`}
-            >
-              {status !== "ALL" &&
-                STATUS_CONFIG[status] &&
-                React.createElement(STATUS_CONFIG[status].icon, { size: 14 })}
-              <span>
-                {status === "ALL"
-                  ? "All"
-                  : STATUS_CONFIG[status]?.label || status}
-              </span>
-              <span className="badge">{count}</span>
-            </button>
-          ))}
+      <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6">
+        <div className="flex gap-3 flex-wrap">
+          {Object.entries(statusCounts).map(([status, count]) => {
+            const StatusIcon = STATUS_CONFIG[status]?.icon;
+            return (
+              <button
+                key={status}
+                onClick={() => setFilterStatus(status)}
+                className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                  filterStatus === status
+                    ? "bg-indigo-600 text-white"
+                    : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
+                }`}
+              >
+                {StatusIcon && <StatusIcon size={14} />}
+                <span>
+                  {status === "ALL"
+                    ? "All"
+                    : STATUS_CONFIG[status]?.label || status}
+                </span>
+                <span
+                  className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-xs font-semibold ${
+                    filterStatus === status
+                      ? "bg-indigo-500 text-white"
+                      : "bg-gray-200 text-gray-700"
+                  }`}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {/* Loading State */}
       {loading ? (
-        <div className="modern-card">
-          <div className="loading-center">
-            <p>Loading maintenance requests...</p>
+        <div className="bg-white rounded-xl border border-gray-200 p-10">
+          <div className="text-center">
+            <p className="text-gray-600">Loading maintenance requests...</p>
           </div>
         </div>
       ) : (
         /* Maintenance Requests List */
-        <div className="modern-card">
-          <div className="card-header">
-            <h3>
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-200">
+            <h3 className="text-lg font-semibold text-gray-900">
               {filterStatus === "ALL"
                 ? `All Maintenance Requests (${filteredMaintenance.length})`
                 : `${
@@ -210,9 +279,11 @@ export default function Maintenance() {
           </div>
 
           {filteredMaintenance.length === 0 ? (
-            <div className="empty empty-center">
-              <FiTool size={48} className="empty-icon" />
-              <p>
+            <div className="text-center py-16 px-4">
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 rounded-full mb-4">
+                <FiTool size={32} className="text-gray-400" />
+              </div>
+              <p className="text-lg font-medium text-gray-900 mb-1">
                 {filterStatus === "ALL"
                   ? "No maintenance requests found"
                   : `No ${
@@ -220,65 +291,70 @@ export default function Maintenance() {
                       filterStatus.toLowerCase()
                     } requests`}
               </p>
-              <p className="empty-subtitle">
+              <p className="text-sm text-gray-600">
                 Maintenance requests will appear here when residents submit them
               </p>
             </div>
           ) : (
-            <div className="stack">
+            <div className="divide-y divide-gray-200">
               {filteredMaintenance.map((request) => {
                 const StatusIcon =
                   STATUS_CONFIG[request.status]?.icon || FiAlertCircle;
                 const statusConfig = STATUS_CONFIG[request.status];
+                const statusColors = getStatusColorClasses(request.status);
+                const priorityConfig =
+                  PRIORITY_CONFIG[request.priority?.toUpperCase()];
 
                 return (
-                  <div key={request.id} className="item">
-                    <div className="item-header">
-                      <div className="item-content">
-                        <div className="item-title item-title-spacing">
+                  <div
+                    key={request.id}
+                    className="p-6 hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="flex items-start justify-between gap-4 mb-4">
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-lg font-semibold text-gray-900 mb-3">
                           {request.title}
+                        </h4>
+
+                        <div className="flex flex-wrap gap-x-4 gap-y-2 mb-3 text-sm text-gray-600">
+                          <div className="flex items-center gap-1.5">
+                            <FiUser size={14} className="flex-shrink-0" />
+                            <span>{request.user?.name || "Unknown User"}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <FiMail size={14} className="flex-shrink-0" />
+                            <span className="truncate">
+                              {request.user?.email || "No email"}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <FiCalendar size={14} className="flex-shrink-0" />
+                            <span>{formatDate(request.createdAt)}</span>
+                          </div>
                         </div>
 
-                        <div className="item-meta">
-                          <div className="item-sub">
-                            <FiUser size={12} className="item-meta-icon" />
-                            {request.user?.name || "Unknown User"}
-                          </div>
-                          <div className="item-sub">
-                            <FiMail size={12} className="item-meta-icon" />
-                            {request.user?.email || "No email"}
-                          </div>
-                          <div className="item-sub">
-                            <FiCalendar size={12} className="item-meta-icon" />
-                            {formatDate(request.createdAt)}
-                          </div>
-                        </div>
-
-                        <div className="item-badges">
+                        <div className="flex flex-wrap gap-2">
                           {/* Status Badge */}
-                          <div
-                            className={`status-badge ${
-                              request.status?.toLowerCase().replace("_", "-") ||
-                              "submitted"
-                            }`}
+                          <span
+                            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium border ${statusColors.bg} ${statusColors.text} ${statusColors.border}`}
                           >
-                            {React.createElement(StatusIcon, { size: 12 })}
+                            <StatusIcon size={14} />
                             {statusConfig?.label || request.status}
-                          </div>
+                          </span>
 
                           {/* Priority Badge */}
-                          {request.priority && (
-                            <div
-                              className={`priority-badge ${request.priority.toLowerCase()}`}
+                          {request.priority && priorityConfig && (
+                            <span
+                              className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium border ${priorityConfig.bg} ${priorityConfig.text} ${priorityConfig.border}`}
                             >
                               {request.priority} Priority
-                            </div>
+                            </span>
                           )}
                         </div>
                       </div>
 
                       {/* Status Update Buttons */}
-                      <div className="status-buttons">
+                      <div className="flex flex-wrap gap-2 flex-shrink-0">
                         {Object.entries(STATUS_CONFIG).map(
                           ([status, config]) => {
                             if (status === request.status) return null;
@@ -290,14 +366,12 @@ export default function Maintenance() {
                                   handleStatusUpdate(request.id, status)
                                 }
                                 disabled={updateLoading[request.id]}
-                                className="btn ghost status-btn"
-                                style={{
-                                  color: config.color,
-                                  borderColor: config.bg,
-                                }}
+                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${getStatusButtonClasses(
+                                  status
+                                )}`}
                                 title={`Mark as ${config.label}`}
                               >
-                                {React.createElement(config.icon, { size: 12 })}
+                                {React.createElement(config.icon, { size: 14 })}
                                 {updateLoading[request.id]
                                   ? "..."
                                   : config.label}
@@ -309,7 +383,7 @@ export default function Maintenance() {
                     </div>
 
                     {/* Description */}
-                    <div className="item-body item-description">
+                    <div className="mb-3 text-sm text-gray-700 leading-relaxed">
                       {request.description ||
                         request.content ||
                         "No description provided"}
@@ -317,9 +391,19 @@ export default function Maintenance() {
 
                     {/* Additional Details */}
                     {(request.location || request.category) && (
-                      <div className="item-details">
-                        {request.location && <span>📍 {request.location}</span>}
-                        {request.category && <span>🏷️ {request.category}</span>}
+                      <div className="flex flex-wrap gap-3 text-sm text-gray-600">
+                        {request.location && (
+                          <div className="flex items-center gap-1.5">
+                            <FiMapPin size={14} className="text-gray-400" />
+                            <span>{request.location}</span>
+                          </div>
+                        )}
+                        {request.category && (
+                          <div className="flex items-center gap-1.5">
+                            <FiTag size={14} className="text-gray-400" />
+                            <span>{request.category}</span>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

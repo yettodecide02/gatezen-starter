@@ -105,6 +105,8 @@ router.get("/maintenance", async (req, res) => {
       },
       orderBy: { createdAt: "desc" },
     });
+    console.log(tickets);
+
     res.json(tickets);
   } catch (err) {
     console.error("Error fetching tickets:", err);
@@ -277,15 +279,12 @@ router.get("/visitors", async (req, res) => {
 
 router.post("/visitor-creation", async (req, res) => {
   try {
-
     const {
       name,
       contact,
       visitorType,
       visitDate,
-      purpose,
       vehicleNo,
-      notes,
       communityId,
       userId,
     } = req.body || {};
@@ -293,11 +292,9 @@ router.post("/visitor-creation", async (req, res) => {
     // Use authenticated user's ID as userId if not provided
     const actualUserId = userId || req.user?.id;
 
-
-    if (!name || !contact || !communityId || !actualUserId) {
+    if (!name || !communityId || !actualUserId) {
       return res.status(400).json({
-        error:
-          "Missing required fields: name, contact, communityId, and userId",
+        error: "Missing required fields: name, communityId, and userId",
       });
     }
 
@@ -307,7 +304,6 @@ router.post("/visitor-creation", async (req, res) => {
         ? visitorType.toUpperCase()
         : "GUEST";
 
-    // For GUEST visitors, contact should be an email
     if (actualVisitorType === "GUEST") {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(contact)) {
@@ -540,7 +536,7 @@ router.get("/bookings", async (req, res) => {
         actualFacilityIds = [facility.id];
       }
     }
-    
+
     if (actualFacilityIds.length === 0) {
       return res
         .status(404)
@@ -607,13 +603,11 @@ router.post("/bookings", async (req, res) => {
     let actualFacility = null;
     let facilityConfig = null;
 
-
     // Check if facilityId is a FacilityConfiguration ID
     facilityConfig = await prisma.facilityConfiguration.findUnique({
       where: { id: facilityId },
       include: { facilities: true },
     });
-
 
     if (facilityConfig) {
       // This is a configuration ID, we need to find or create the actual facility
@@ -675,8 +669,6 @@ router.post("/bookings", async (req, res) => {
       }
     }
 
-
-
     if (!actualFacility) {
       return res.status(404).json({ error: "Could not resolve facility" });
     }
@@ -684,8 +676,6 @@ router.post("/bookings", async (req, res) => {
     const communityId = actualFacility.communityId;
     const start = new Date(startsAt);
     const end = new Date(endsAt);
-
-
 
     // Validate dates
     if (isNaN(start.getTime()) || isNaN(end.getTime())) {
@@ -706,15 +696,11 @@ router.post("/bookings", async (req, res) => {
     const startHM = toHM(start);
     const endHM = toHM(end);
 
-
-
     if (startHM < actualFacility.open || endHM > actualFacility.close) {
       return res.status(400).json({
         error: `Booking must be within ${actualFacility.open}–${actualFacility.close}`,
       });
     }
-
-
 
     if (!isAlignedToSlot(start, end, actualFacility.slotMins)) {
       return res.status(400).json({
@@ -1088,6 +1074,52 @@ router.get("/community-stats", async (req, res) => {
       message: "Failed to fetch community statistics",
       error: error.message,
     });
+  }
+});
+
+router.get("/packages", async (req, res) => {
+  const { communityId, userId, from, to } = req.query;
+
+  if (!communityId || !userId) {
+    return res.status(400).json({ error: "communityId and userId required" });
+  }
+
+  if (!from || !to) {
+    return res.status(400).json({ error: "date required" });
+  }
+
+  const fromDate = new Date(from);
+  const toDate = new Date(to);
+
+  if (isNaN(fromDate) || isNaN(toDate)) {
+    return res.status(400).json({ error: "invalid date format" });
+  }
+
+  try {
+    const packages = await prisma.packages.findMany({
+      where: {
+        communityId,
+        userId,
+        createdAt: {
+          gte: fromDate,
+          lte: toDate,
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        image: true,
+        status: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    return res.status(200).json(packages);
+  } catch (e) {
+    console.error(e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 

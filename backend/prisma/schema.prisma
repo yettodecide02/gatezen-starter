@@ -32,6 +32,7 @@ model Community {
   users            User[]
   visitors         Visitor[]
   payments         Payment[]
+  packages         Packages[]
 }
 
 model Block {
@@ -81,6 +82,7 @@ model User {
   community   Community  @relation(fields: [communityId], references: [id], onDelete: Cascade)
   unit        Unit?      @relation(fields: [unitId], references: [id], onDelete: SetNull)
   visitors    Visitor[]  @relation("UserVisitors")
+  packages    Packages[]
 
   @@index([communityId])
   @@index([communityId, role])
@@ -261,6 +263,18 @@ model Payment {
   @@index([createdAt])
 }
 
+model Packages {
+  id          String          @id @default(uuid())
+  name        String
+  userId      String
+  communityId String
+  image       String
+  status      PackageStatus   @default(PENDING)
+  createdAt   DateTime        @default(now())
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community   Community       @relation(fields: [communityId], references: [id], onDelete: Cascade)
+}
+
 enum UserRole {
   RESIDENT
   ADMIN
@@ -325,4 +339,9 @@ enum PaymentStatus {
   COMPLETED
   FAILED
   OVERDUE
+}
+
+enum PackageStatus {
+  PENDING
+  PICKED
 }

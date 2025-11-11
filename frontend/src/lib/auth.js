@@ -35,3 +35,8 @@ export function isAdmin() {
   const u = getUser();
   return !!u && u.role === "ADMIN";
 }
+
+export function isGatekeeper() {
+  const u = getUser();
+  return !!u && u.role === "GATEKEEPER";
+}

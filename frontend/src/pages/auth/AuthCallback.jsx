@@ -1,6 +1,6 @@
-import supabase from "../lib/supabase";
+import supabase from "../../lib/supabase";
 import axios from "axios";
-import { setToken, setUser } from "../lib/auth";
+import { setToken, setUser } from "../../lib/auth";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
 
@@ -17,20 +17,14 @@ export default function AuthCallback() {
           return;
         }
 
-        const BASE =
-          import.meta.env.VITE_API_URL ||
-          "http://localhost:4000";
+        const BASE = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
         const res = await axios.get(`${BASE}/auth/existing-user`, {
           params: { email: supUser.email },
         });
 
-        console.log(res);
-        
-
         if (res.data?.exists) {
-          if (res.data.jwttoken)
-            setToken(res.data.jwttoken);
+          if (res.data.jwttoken) setToken(res.data.jwttoken);
           if (res.data.user) setUser(res.data.user);
 
           if (res.data.user.role === "ADMIN") {
@@ -41,18 +35,7 @@ export default function AuthCallback() {
             return;
           }
         }
-
-        const signupRes = await axios.post(`${BASE}/auth/signup`, {
-          email: supUser.email,
-          name: supUser.user_metadata?.full_name || supUser.email.split("@")[0],
-        });
-
-        if (signupRes.data?.jwttoken)
-          setToken(signupRes.data.jwttoken);
-
-        if (signupRes.data?.user) setUser(signupRes.data.user);
-
-        navigate("/dashboard", { replace: true });
+        navigate("/resident-from", { replace: true });
       } catch (e) {
         navigate("/", { replace: true });
       }
