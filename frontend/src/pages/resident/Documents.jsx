@@ -1,139 +1,338 @@
+import { useEffect, useState } from "react";
+import {
+  FiFileText,
+  FiEye,
+  FiX,
+  FiDownload,
+  FiAlertCircle,
+  FiSearch,
+} from "react-icons/fi";
 import axios from "axios";
-import { useEffect, useMemo, useState } from "react";
-import { FiFileText, FiUpload, FiSearch, FiDownload, FiTrash2, FiFilter } from "react-icons/fi";
+import { getUser, getToken } from "../../lib/auth";
 
-async function fileToBase64(file) {
-  const buf = await file.arrayBuffer();
-  let binary = "";
-  const bytes = new Uint8Array(buf);
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) binary += String.fromCharCode(bytes[i]);
-  return btoa(binary);
-}
+const API = import.meta.env.VITE_API_URL;
 
 export default function Documents() {
-  const user = useMemo(() => {
-    try { return JSON.parse(localStorage.getItem("user")) || { id: "u1" }; }
-    catch { return { id: "u1" }; }
-  }, []);
+  const [pdfs, setPdfs] = useState([]);
+  const [filteredPdfs, setFilteredPdfs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [viewingPdf, setViewingPdf] = useState(null);
+  const [pdfBlobUrl, setPdfBlobUrl] = useState(null);
+  const [loadingPdf, setLoadingPdf] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
-  const [docs, setDocs] = useState([]);
-  const [q, setQ] = useState("");
-  const [type, setType] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
-
-  async function load() {
-    const qs = new URLSearchParams();
-    if (q) qs.set("q", q);
-    if (type) qs.set("type", type);
-    if (from) qs.set("from", from);
-    if (to) qs.set("to", to);
-    if (user.id) qs.set("ownerId", user.id);
-    const list = await api(`/documents?${qs.toString()}`);
-    setDocs(list);
-  }
-  useEffect(() => { load(); }, [q, type, from, to]);
-
-  // live updates
   useEffect(() => {
-    const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
-    const es = new EventSource(`${API_URL}/events`);
-    const refresh = () => load();
-    es.addEventListener("document", refresh);
-    es.onerror = () => {};
-    return () => { es.removeEventListener("document", refresh); es.close(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const load = async () => {
+      const user = await getUser();
+      if (!user?.communityId) {
+        setLoading(false);
+        return console.error("User has no communityId");
+      }
+
+      await fetchPdfs(user.communityId);
+      setLoading(false);
+    };
+    load();
   }, []);
 
-  async function onUpload(e) {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    setBusy(true); setMsg("");
-    try {
-      const b64 = await fileToBase64(f);
-      const body = {
-        ownerId: user.id,
-        name: f.name,
-        type: type || "other",
-        tags: [],
-        data: b64,
-        mime: f.type || "application/octet-stream"
-      };
-      await axios.post((import.meta.env.VITE_API_URL || "http://localhost:5000") + "/documents", body);
-      setMsg("Upload complete.");
-      await load();
-    } catch (err) {
-      setMsg("Upload failed.");
-    } finally {
-      setBusy(false);
-      e.target.value = ""; // reset input
+  // Cleanup blob URL when component unmounts or PDF changes
+  useEffect(() => {
+    return () => {
+      if (pdfBlobUrl) {
+        URL.revokeObjectURL(pdfBlobUrl);
+      }
+    };
+  }, [pdfBlobUrl]);
+
+  // Filter PDFs based on search query
+  useEffect(() => {
+    if (searchQuery.trim() === "") {
+      setFilteredPdfs(pdfs);
+    } else {
+      const filtered = pdfs.filter((pdf) =>
+        pdf.name.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+      setFilteredPdfs(filtered);
     }
-  }
+  }, [searchQuery, pdfs]);
 
-  async function del(id) {
-    if (!confirm("Delete document?")) return;
-    await axios.delete((import.meta.env.VITE_API_URL || "http://localhost:5000") + `/documents/${id}`);
-    await load();
-  }
+  const fetchPdfs = async (cid) => {
+    try {
+      const res = await axios.get(`${API}/resident/pdfs?communityId=${cid}`, {
+        headers: {
+          Authorization: `Bearer ${getToken()}`,
+        },
+      });
+      setPdfs(res.data.pdfs || []);
+      setFilteredPdfs(res.data.pdfs || []);
+    } catch (err) {
+      console.error("Error fetching PDFs:", err);
+      setPdfs([]);
+      setFilteredPdfs([]);
+    }
+  };
 
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
+  const viewPdf = async (pdf) => {
+    setLoadingPdf(true);
+    setViewingPdf(pdf);
+
+    // Clean up previous blob URL
+    if (pdfBlobUrl) {
+      URL.revokeObjectURL(pdfBlobUrl);
+      setPdfBlobUrl(null);
+    }
+
+    try {
+      const response = await axios.get(`${API}/resident/pdf/${pdf.id}`, {
+        headers: {
+          Authorization: `Bearer ${getToken()}`,
+        },
+        responseType: "arraybuffer",
+      });
+
+      const blob = new Blob([response.data], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+
+      setPdfBlobUrl(url);
+    } catch (err) {
+      console.error("Error loading PDF:", err);
+      alert(
+        "Failed to load PDF: " + (err.response?.data?.error || err.message)
+      );
+      setViewingPdf(null);
+    } finally {
+      setLoadingPdf(false);
+    }
+  };
+
+  const downloadPdf = async (id, pdfName) => {
+    try {
+      const response = await axios.get(`${API}/resident/pdf/${id}`, {
+        headers: {
+          Authorization: `Bearer ${getToken()}`,
+        },
+        responseType: "arraybuffer",
+      });
+
+      const blob = new Blob([response.data], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = pdfName || "document.pdf";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Error downloading PDF:", err);
+      alert("Failed to download PDF");
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading documents...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="modern-content">
-      <div className="section-header">
-        <div className="section-left">
-          <div className="section-icon"><FiFileText/></div>
-          <h3 style={{margin:0}}>Documents</h3>
-        </div>
-        <label className="btn outline" style={{cursor:"pointer", position:"relative", overflow:"hidden"}}>
-          <FiUpload/> Upload
-          <input type="file" style={{ position:"absolute", inset:0, opacity:0, cursor:"pointer" }} onChange={onUpload} disabled={busy}/>
-        </label>
-      </div>
-
-      <div className="modern-card" style={{display:"grid", gap:12}}>
-        <div className="row between">
-          <div className="row" style={{gap:8}}>
-            <div className="input" style={{display:"flex", alignItems:"center", gap:8}}>
-              <FiSearch/>
-              <input className="input" style={{border:"none",boxShadow:"none",padding:0}} placeholder="Search by name/type/tag" value={q} onChange={e=>setQ(e.target.value)} />
+    <div>
+      <div className="max-w-7xl mx-auto space-y-3">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-indigo-100 rounded-lg">
+              <FiFileText className="w-6 h-6 text-indigo-600" />
             </div>
-            <div className="row" style={{gap:8}}>
-              <div className="input" style={{display:"flex", alignItems:"center",gap:8, minWidth:160}}>
-                <FiFilter/>
-                <select className="input" style={{border:"none",boxShadow:"none",padding:0}} value={type} onChange={e=>setType(e.target.value)}>
-                  <option value="">All types</option>
-                  <option value="lease">Lease</option>
-                  <option value="agreement">Agreement</option>
-                  <option value="invoice">Invoice</option>
-                  <option value="id">ID Proof</option>
-                  <option value="other">Other</option>
-                </select>
-              </div>
-              <input type="date" className="input" value={from} onChange={e=>setFrom(e.target.value)} />
-              <input type="date" className="input" value={to} onChange={e=>setTo(e.target.value)} />
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">Documents</h1>
             </div>
           </div>
-          {msg && <div className="muted">{msg}</div>}
+
+          {/* Document Count Badge */}
+          <div className="px-4 py-2 bg-indigo-50 border border-indigo-200 rounded-lg">
+            <span className="text-sm font-medium text-indigo-700">
+              {filteredPdfs.length}{" "}
+              {filteredPdfs.length === 1 ? "Document" : "Documents"}
+            </span>
+          </div>
         </div>
 
-        <div className="list">
-          {docs.length === 0 && <div className="empty">No documents match your filters.</div>}
-          {docs.map(d => (
-            <div key={d.id} className="list-item">
-              <div className="grow">
-                <div className="title">{d.name}</div>
-                <div className="sub">{d.type} • {new Date(d.createdAt).toLocaleString()}</div>
+        {/* Search Bar */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3">
+          <div className="relative">
+            <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search documents by name..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left: Document List */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">
+              Available Documents
+            </h2>
+
+            {filteredPdfs.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <FiFileText className="w-8 h-8 text-gray-400" />
+                </div>
+                <p className="text-gray-500 text-sm">
+                  {searchQuery
+                    ? "No documents match your search"
+                    : "No documents available"}
+                </p>
               </div>
-              <a className="btn outline" href={`${API_URL}/documents/${d.id}/download`} target="_blank" rel="noreferrer">
-                <FiDownload/> Download
-              </a>
-              <button className="btn" onClick={()=>del(d.id)}><FiTrash2/> Delete</button>
+            ) : (
+              <div className="space-y-2 max-h-[calc(100vh-300px)] overflow-y-auto">
+                {filteredPdfs.map((pdf) => (
+                  <div
+                    key={pdf.id}
+                    className={`p-4 rounded-lg border transition-colors cursor-pointer ${
+                      viewingPdf?.id === pdf.id
+                        ? "bg-indigo-50 border-indigo-200"
+                        : "bg-white border-gray-200 hover:bg-gray-50"
+                    }`}
+                    onClick={() => viewPdf(pdf)}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="p-2 bg-red-50 rounded-lg flex-shrink-0">
+                        <FiFileText className="w-5 h-5 text-red-600" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-medium text-gray-900 truncate mb-1">
+                          {pdf.name}
+                        </h3>
+                        <div className="flex items-center gap-2 text-xs text-gray-500">
+                          <span>PDF Document</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 mt-3">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          viewPdf(pdf);
+                        }}
+                        className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors"
+                      >
+                        <FiEye className="w-4 h-4" />
+                        View
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          downloadPdf(pdf.id, pdf.name);
+                        }}
+                        className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-green-600 bg-green-50 rounded-lg hover:bg-green-100 transition-colors"
+                      >
+                        <FiDownload className="w-4 h-4" />
+                        Download
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Right: PDF Viewer */}
+          <div className="lg:col-span-2">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+              {viewingPdf ? (
+                <>
+                  {/* Viewer Header */}
+                  <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-gray-50">
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      <FiFileText className="w-5 h-5 text-indigo-600 flex-shrink-0" />
+                      <div className="min-w-0">
+                        <h3 className="font-semibold text-gray-900 truncate">
+                          {viewingPdf.name}
+                        </h3>
+                        <p className="text-sm text-gray-500">PDF Document</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() =>
+                          downloadPdf(viewingPdf.id, viewingPdf.name)
+                        }
+                        className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                      >
+                        <FiDownload className="w-4 h-4" />
+                        Download
+                      </button>
+                      <button
+                        onClick={() => {
+                          setViewingPdf(null);
+                          if (pdfBlobUrl) {
+                            URL.revokeObjectURL(pdfBlobUrl);
+                            setPdfBlobUrl(null);
+                          }
+                        }}
+                        className="p-2 text-gray-700 hover:bg-gray-200 rounded-lg transition-colors"
+                      >
+                        <FiX className="w-5 h-5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* PDF Viewer */}
+                  <div
+                    className="relative bg-gray-100"
+                    style={{ height: "calc(100vh - 300px)" }}
+                  >
+                    {loadingPdf ? (
+                      <div className="flex items-center justify-center h-full">
+                        <div className="text-center">
+                          <div className="w-12 h-12 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mx-auto mb-4"></div>
+                          <p className="text-gray-600">Loading PDF...</p>
+                        </div>
+                      </div>
+                    ) : pdfBlobUrl ? (
+                      <iframe
+                        src={pdfBlobUrl}
+                        className="w-full h-full"
+                        title={viewingPdf.name}
+                        style={{ border: "none" }}
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center h-full">
+                        <p className="text-gray-500">Unable to load PDF</p>
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-32 px-6">
+                  <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-4">
+                    <FiFileText className="w-10 h-10 text-indigo-600" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                    No Document Selected
+                  </h3>
+                  <p className="text-gray-600 text-center max-w-md">
+                    Select a document from the list to view it here
+                  </p>
+                </div>
+              )}
             </div>
-          ))}
+          </div>
         </div>
       </div>
     </div>

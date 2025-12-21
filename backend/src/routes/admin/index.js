@@ -2,12 +2,15 @@ import express from "express";
 import nodemailer from "nodemailer";
 import prisma from "../../../lib/prisma.js";
 import jwt from "jsonwebtoken";
+import multer from "multer";
 import { UserStatus, FacilityType, PriceType } from "@prisma/client";
 import { authMiddleware } from "../../middleware/auth.js";
 
 const router = express.Router();
 router.use(authMiddleware);
 router.use(checkAuth);
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 function checkAuth(req, res, next) {
   if (req.user.role !== "ADMIN") {
@@ -24,11 +27,9 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// Get all data for admin dashboard
 router.get("/dashboard", async (req, res) => {
   try {
     const { communityId } = req.query;
-    // First, get the community (assuming single community for now)
     const community = await prisma.community.findUnique({
       where: { id: communityId },
       include: {
@@ -58,7 +59,6 @@ router.get("/dashboard", async (req, res) => {
       });
     }
 
-    // Get bookings through facilities
     const bookings = await prisma.booking.findMany({
       where: {
         facility: {
@@ -85,7 +85,6 @@ router.get("/dashboard", async (req, res) => {
   }
 });
 
-// Get dashboard statistics
 router.get("/dashboard-stats", async (req, res) => {
   try {
     const { communityId } = req.query;
@@ -102,7 +101,6 @@ router.get("/dashboard-stats", async (req, res) => {
       return res.status(404).json({ error: "No community found" });
     }
 
-    // Get counts for various entities
     const [
       totalBlocks,
       totalUnits,
@@ -1984,5 +1982,101 @@ router.get("/visitor", async (req, res) => {
     res.status(500).json({ error: "Failed to get visitors" });
   }
 });
+
+router.post("/pdf", upload.single("file"), async (req, res) => {
+  try {
+    const { file } = req;
+    const { communityId, name } = req.body;
+
+    if (!communityId)
+      return res.status(400).json({ error: "CommunityId required" });
+
+    if (!file) return res.status(400).json({ error: "PDF file is required" });
+
+    const pdfBytes = file.buffer;
+
+    const result = await prisma.pdfs.create({
+      data: {
+        name: name || file.originalname,
+        content: pdfBytes,
+        communityId: communityId,
+      },
+    });
+
+    res.status(200).json({ message: "PDF uploaded successfully", result });
+  } catch (e) {
+    console.error("Error uploading PDF:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.get("/pdfs", async (req, res) => {
+  try {
+    const { communityId } = req.query;
+
+    if (!communityId) {
+      return res.status(400).json({ error: "CommunityId required" });
+    }
+
+    const pdfs = await prisma.pdfs.findMany({
+      where: { communityId },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    res.status(200).json({ pdfs });
+  } catch (e) {
+    console.error("Error fetching PDFs:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.get("/pdf/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const pdf = await prisma.pdfs.findUnique({ where: { id } });
+
+    if (!pdf) return res.status(404).send("PDF not found");
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${pdf.name}.pdf"`);
+
+    res.end(pdf.content); // IMPORTANT!!!
+  } catch (e) {
+    console.error("Error fetching PDFs:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+
+router.delete("/pdf/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({ error: "PDF ID required" });
+    }
+
+    const existingPdf = await prisma.pdfs.findUnique({
+      where: { id },
+    });
+
+    if (!existingPdf) {
+      return res.status(404).json({ error: "PDF not found" });
+    }
+
+    await prisma.pdfs.delete({
+      where: { id },
+    });
+
+    res.status(200).json({ message: "PDF deleted successfully" });
+  } catch (e) {
+    console.error("Error deleting PDF:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 
 export default router;

@@ -1210,4 +1210,44 @@ router.get("/neighbors", async (req, res) => {
   }
 });
 
+router.get("/pdfs", async (req, res) => {
+  try {
+    const { communityId } = req.query;
+
+    if (!communityId) {
+      return res.status(400).json({ error: "CommunityId required" });
+    }
+
+    const pdfs = await prisma.pdfs.findMany({
+      where: { communityId },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    res.status(200).json({ pdfs });
+  } catch (e) {
+    console.error("Error fetching PDFs:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.get("/pdf/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const pdf = await prisma.pdfs.findUnique({ where: { id } });
+
+    if (!pdf) return res.status(404).send("PDF not found");
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${pdf.name}.pdf"`);
+
+    res.end(pdf.content); // IMPORTANT!!!
+  } catch (e) {
+    console.error("Error fetching PDFs:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 export default router;
