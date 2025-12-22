@@ -86,7 +86,6 @@ export default function Documents() {
       await axios.post(`${API}/admin/pdf`, formData, {
         headers: {
           Authorization: `Bearer ${getToken()}`,
-          "Content-Type": "multipart/form-data",
         },
       });
 
