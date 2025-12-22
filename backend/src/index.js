@@ -13,6 +13,9 @@ dotenv.config();
 
 const app = express();
 
+export const config = {
+  runtime: "nodejs",
+};
 
 app.use(
   cors({
