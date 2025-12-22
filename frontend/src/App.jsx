@@ -19,7 +19,6 @@ import ForgotPassword from "./pages/auth/ForgotPassword.jsx";
 import ResidentDetailsForm from "./pages/auth/ResidentDetailsForm.jsx";
 import MyPackages from "./pages/resident/MyPackages.jsx";
 
-
 // Admin Pages
 import AdminDashboard from "./pages/admin/AdminDashboard.jsx";
 import AdminSignup from "./pages/admin/AdminSignup.jsx";
@@ -32,6 +31,7 @@ import BookingsAdmin from "./pages/admin/Bookings.jsx";
 import PaymentsAdmin from "./pages/admin/Payments.jsx";
 import CreateStaff from "./pages/admin/CreateStaff.jsx";
 import VisitorsLog from "./pages/admin/VisitorsLog.jsx";
+import AdminDocuments from "./pages/admin/Documents.jsx";
 
 // Gatekeeper Pages
 import GateDashboard from "./pages/gatekeeper/GateDashboard.jsx";
@@ -214,6 +214,16 @@ export default function App() {
           <ProtectedRoute>
             <AdminShell>
               <PaymentsAdmin />
+            </AdminShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/documents"
+        element={
+          <ProtectedRoute>
+            <AdminShell>
+              <AdminDocuments />
             </AdminShell>
           </ProtectedRoute>
         }

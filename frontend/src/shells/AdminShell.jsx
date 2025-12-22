@@ -3,12 +3,26 @@ import { useNavigate, NavLink } from "react-router-dom";
 import supabase from "../lib/supabase";
 import { clearUser, getUser } from "../lib/auth";
 import PageNotAvalible from "../pages/auth/PageNotAvalible";
-import { FiHome, FiUser, FiLogOut, FiUsers, FiSettings, FiShield, FiDollarSign, FiCalendar, FiTool, FiBell } from "react-icons/fi";
-
+import {
+  FiHome,
+  FiUser,
+  FiLogOut,
+  FiUsers,
+  FiSettings,
+  FiShield,
+  FiDollarSign,
+  FiCalendar,
+  FiTool,
+  FiBell,
+  FiFileText,
+  FiMenu,
+  FiX,
+} from "react-icons/fi";
 
 function AdminShell({ children }) {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     const currentUser = getUser();
@@ -21,109 +35,169 @@ function AdminShell({ children }) {
     navigate("/");
   };
 
+  const closeSidebar = () => {
+    setSidebarOpen(false);
+  };
+
   if (user === null) return null;
 
   if (user.role !== "ADMIN") {
     return <PageNotAvalible />;
   }
 
-    const AdminItem = ({ to, icon, label, end = false }) => (
-      <NavLink
-        to={to}
-        end={end}
-        className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
-      >
-        <span className="icon">{icon}</span>
-        <span className="label">{label}</span>
-      </NavLink>
-    );
+  const AdminItem = ({ to, icon, label, end = false }) => (
+    <NavLink
+      to={to}
+      end={end}
+      onClick={closeSidebar}
+      className={({ isActive }) =>
+        `flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+          isActive
+            ? "bg-indigo-600 text-white"
+            : "text-gray-700 hover:bg-gray-100"
+        }`
+      }
+    >
+      <span className="text-xl">{icon}</span>
+      <span className="font-medium">{label}</span>
+    </NavLink>
+  );
 
   return (
-    <div className="app-shell">
+    <div className="flex h-screen bg-gray-50 overflow-hidden">
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/20 bg-opacity-50 z-40 lg:hidden"
+          onClick={closeSidebar}
+        />
+      )}
+
       <aside
-        className="sidebar-modern"
-        style={{ maxHeight: "100vh", overflowY: "auto" }}
+        className={`fixed lg:static inset-y-0 left-0 transform ${
+          sidebarOpen ? "translate-x-0" : "-translate-x-full"
+        } lg:translate-x-0 transition-transform duration-300 ease-in-out z-50 w-72 bg-white border-r border-gray-200 flex flex-col`}
       >
-        <div className="sidebar-main">
-          <div className="brand-row">
-            <div className="brand-mark">GZ</div>
-            <div className="brand-text">
-              <div className="brand-title">GateZen</div>
-              <div className="brand-sub">Gatekeeper</div>
+        <div className="flex items-center justify-between py-4 px-6 border-b border-gray-200">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-md">
+              GZ
+            </div>
+            <div>
+              <div className="font-bold text-gray-900 text-lg">GateZen</div>
+              <div className="text-xs text-gray-500">Gatekeeper</div>
             </div>
           </div>
-          <nav className="nav-list">
-            <AdminItem
-              to="/admin"
-              icon={<FiHome />}
-              label="Dashboard"
-              end={true}
-            />
-            <AdminItem
-              to="/admin/residents"
-              icon={<FiUsers />}
-              label="Residents"
-            />
-            <AdminItem
-              to="/admin/visitors-log"
-              icon={<FiUser />}
-              label="Visitors Log"
-            />
-            <AdminItem
-              to="/admin/announcements"
-              icon={<FiBell />}
-              label="Announcements"
-            />
-            <AdminItem
-              to="/admin/maintenance"
-              icon={<FiTool />}
-              label="Maintenance"
-            />
-            <AdminItem
-              to="/admin/bookings"
-              icon={<FiCalendar />}
-              label="Bookings"
-            />
-            <AdminItem
-              to="/admin/payments"
-              icon={<FiDollarSign />}
-              label="Payments"
-            />
-            <AdminItem
-              to="/admin/blocks"
-              icon={<FiHome />}
-              label="Blocks & Units"
-            />
-            <AdminItem
-              to="/admin/create-staff"
-              icon={<FiShield />}
-              label="Staff Management"
-            />
-            <AdminItem
-              to="/admin/community"
-              icon={<FiSettings />}
-              label="Community"
-            />
-          </nav>
-          <button className="logout-btn" onClick={logout}>
-            <FiLogOut /> <span>Logout</span>
+          <button
+            onClick={closeSidebar}
+            className="lg:hidden p-2 text-gray-500 hover:bg-gray-100 rounded-lg"
+          >
+            <FiX className="w-6 h-6" />
+          </button>
+        </div>
+
+        <nav className="flex-1 overflow-y-auto p-4 space-y-1">
+          <AdminItem
+            to="/admin"
+            icon={<FiHome />}
+            label="Dashboard"
+            end={true}
+          />
+          <AdminItem
+            to="/admin/residents"
+            icon={<FiUsers />}
+            label="Residents"
+          />
+          <AdminItem
+            to="/admin/visitors-log"
+            icon={<FiUser />}
+            label="Visitors Log"
+          />
+          <AdminItem
+            to="/admin/announcements"
+            icon={<FiBell />}
+            label="Announcements"
+          />
+          <AdminItem
+            to="/admin/maintenance"
+            icon={<FiTool />}
+            label="Maintenance"
+          />
+          <AdminItem
+            to="/admin/bookings"
+            icon={<FiCalendar />}
+            label="Bookings"
+          />
+          <AdminItem
+            to="/admin/payments"
+            icon={<FiDollarSign />}
+            label="Payments"
+          />
+          <AdminItem
+            to="/admin/blocks"
+            icon={<FiHome />}
+            label="Blocks & Units"
+          />
+          <AdminItem
+            to="/admin/create-staff"
+            icon={<FiShield />}
+            label="Staff Management"
+          />
+          <AdminItem
+            to="/admin/documents"
+            icon={<FiFileText />}
+            label="Documents"
+          />
+          <AdminItem
+            to="/admin/community"
+            icon={<FiSettings />}
+            label="Community"
+          />
+        </nav>
+
+        <div className="p-4 border-t border-gray-200">
+          <button
+            onClick={logout}
+            className="flex items-center gap-3 w-full px-4 py-3 text-red-600 hover:bg-red-50 rounded-lg transition-colors font-medium"
+          >
+            <FiLogOut className="text-xl" />
+            <span>Logout</span>
           </button>
         </div>
       </aside>
 
-      <main className="main-area">
-        <header className="header-modern">
-          <div className="header-title">Admin Dashboard</div>
-          <div className="user-chip">
-            <div className="avatar">A</div>
-            <div className="meta">
-              <div className="name">Administrator</div>
-              <div className="role">Admin Portal</div>
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="lg:hidden p-2 text-gray-700 hover:bg-gray-100 rounded-lg"
+          >
+            <FiMenu className="w-6 h-6" />
+          </button>
+
+          <div className="flex items-center gap-4">
+            <h1 className="text-xl font-bold text-gray-900 hidden sm:block">
+              Admin Dashboard
+            </h1>
+            <h1 className="text-xl font-bold text-gray-900 sm:hidden">
+              Dashboard
+            </h1>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="hidden sm:block text-right">
+              <div className="font-medium text-gray-900">
+                Administrator
+              </div>
+              <div className="text-sm text-gray-500">Admin Portal</div>
+            </div>
+            <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center text-white font-bold shadow-md">
+              A
             </div>
           </div>
         </header>
-        <div className="content modern-content">{children}</div>
-      </main>
+
+        <main className="flex-1 overflow-y-auto">{children}</main>
+      </div>
     </div>
   );
 }

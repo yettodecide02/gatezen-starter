@@ -2,7 +2,6 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 
-// Import routes
 import authRoutes from "./routes/auth/index.js";
 import adminRoutes from "./routes/admin/index.js";
 import residentRoutes from "./routes/resident/index.js";
@@ -24,18 +23,15 @@ app.use((req, res, next) => {
 });
 
 
-// Welcome route
 app.get("/", (req, res) => {
   res.send("Welcome to the GateZen backend!");
 });
 
-// Route configurations
 app.use("/auth", authRoutes);
 app.use("/admin", adminRoutes);
 app.use("/resident", residentRoutes);
 app.use("/gatekeeper", gatekeeperRoutes);
 
-// Global event store for SSE
 global.eventClients = [];
 
 function broadcastEvent(type, data) {
@@ -48,10 +44,8 @@ function broadcastEvent(type, data) {
   });
 }
 
-// Make broadcastEvent available globally
 global.broadcastEvent = broadcastEvent;
 
-// Server-Sent Events endpoint
 app.get("/events", (req, res) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -61,13 +55,10 @@ app.get("/events", (req, res) => {
     "Access-Control-Allow-Headers": "Cache-Control",
   });
 
-  // Add client to global list
   global.eventClients.push(res);
 
-  // Send initial connection message
   res.write(`data: ${JSON.stringify({ type: "connected", data: {} })}\n\n`);
 
-  // Remove client when connection closes
   req.on("close", () => {
     const index = global.eventClients.indexOf(res);
     if (index !== -1) {
