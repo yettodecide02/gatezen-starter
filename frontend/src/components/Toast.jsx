@@ -1,7 +1,6 @@
 import React, { useEffect } from "react";
 import { FiCheckCircle, FiXCircle, FiInfo, FiX } from "react-icons/fi";
 
-// Individual Toast Component
 function Toast({ toast, onClose }) {
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -9,41 +8,47 @@ function Toast({ toast, onClose }) {
     }, 3000);
 
     return () => clearTimeout(timer);
-  }, []);
+  }, [toast.id, onClose]);
 
-  const getIcon = () => {
-    switch (toast.type) {
-      case "success":
-        return <FiCheckCircle />;
-      case "error":
-        return <FiXCircle />;
-      case "info":
-        return <FiInfo />;
-      default:
-        return <FiInfo />;
-    }
+  const iconMap = {
+    success: <FiCheckCircle className="text-xl" />,
+    error: <FiXCircle className="text-xl" />,
+    info: <FiInfo className="text-xl" />,
+  };
+
+  const baseClasses =
+    "flex items-center gap-3 px-4 py-3 rounded-xl min-w-[300px] max-w-[400px] shadow-xl backdrop-blur border animate-slide-in";
+
+  const typeClasses = {
+    success: "bg-green-500/95 border-green-400/30 text-white",
+    error: "bg-red-500/95 border-red-400/30 text-white",
+    info: "bg-blue-500/95 border-blue-400/30 text-white",
   };
 
   return (
-    <div className={`toast ${toast.type}`}>
-      <div className="toast-icon">{getIcon()}</div>
-      <div className="toast-content">
-        <div className="toast-title">{toast.title}</div>
-        <div className="toast-message">{toast.message}</div>
+    <div className={`${baseClasses} ${typeClasses[toast.type]}`}>
+      <div className="shrink-0">{iconMap[toast.type]}</div>
+
+      <div className="flex-1">
+        <div className="text-sm font-semibold">{toast.title}</div>
+        <div className="text-xs opacity-90">{toast.message}</div>
       </div>
-      <button className="toast-close" onClick={() => onClose(toast.id)}>
+
+      <button
+        onClick={() => onClose(toast.id)}
+        className="p-1 rounded hover:bg-white/20 transition"
+      >
         <FiX />
       </button>
     </div>
   );
 }
 
-// Toast Container Component
 export function ToastContainer({ toasts, onClose }) {
-  if (toasts.length === 0) return null;
+  if (!toasts.length) return null;
 
   return (
-    <div className="toast-container">
+    <div className="fixed top-5 right-5 z-50 flex flex-col gap-2">
       {toasts.map((toast) => (
         <Toast key={toast.id} toast={toast} onClose={onClose} />
       ))}
@@ -53,40 +58,19 @@ export function ToastContainer({ toasts, onClose }) {
 
 export function useToast() {
   const [toasts, setToasts] = React.useState([]);
-  const toastCounter = React.useRef(0);
+  const counter = React.useRef(0);
 
   const addToast = (type, title, message) => {
-    toastCounter.current += 1;
-    const id = `${Date.now()}-${toastCounter.current}`;
-    const newToast = { id, type, title, message };
-    setToasts((prev) => [...prev, newToast]);
+    counter.current += 1;
+    setToasts((prev) => [
+      ...prev,
+      { id: `${Date.now()}-${counter.current}`, type, title, message },
+    ]);
   };
 
   const removeToast = (id) => {
-    setToasts((prev) => prev.filter((toast) => toast.id !== id));
+    setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
   return { toasts, addToast, removeToast };
-}
-
-// Backward compatibility - simple toast for basic use cases
-export default function SimpleToast({ text }) {
-  return (
-    <div
-      style={{
-        position: "fixed",
-        top: 16,
-        right: 16,
-        background: "#111827",
-        color: "#fff",
-        padding: "10px 12px",
-        borderRadius: 12,
-        boxShadow: "0 10px 22px rgba(0,0,0,.22)",
-        zIndex: 50,
-        fontSize: 14,
-      }}
-    >
-      {text}
-    </div>
-  );
 }
