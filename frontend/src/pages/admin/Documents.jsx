@@ -51,7 +51,9 @@ export default function Documents() {
 
   const fetchPdfs = async (cid) => {
     try {
-      const res = await axios.get(`${VITE_API_URL}/admin/pdfs?communityId=${cid}`, {
+      console.log(`${API}/admin/pdfs?communityId=${cid}`);
+      
+      const res = await axios.get(`${API}/admin/pdfs?communityId=${cid}`, {
         headers: {
           Authorization: `Bearer ${getToken()}`,
         },
@@ -81,7 +83,7 @@ export default function Documents() {
 
     try {
       setUploading(true);
-      await axios.post(`${VITE_API_URL}/admin/pdf`, formData, {
+      await axios.post(`${API}/admin/pdf`, formData, {
         headers: {
           Authorization: `Bearer ${getToken()}`,
           "Content-Type": "multipart/form-data",
@@ -106,7 +108,7 @@ export default function Documents() {
     if (!confirm("Are you sure you want to delete this PDF?")) return;
 
     try {
-      await axios.delete(`${VITE_API_URL}/admin/pdf/${id}`, {
+      await axios.delete(`${API}/admin/pdf/${id}`, {
         headers: {
           Authorization: `Bearer ${getToken()}`,
         },
@@ -134,7 +136,7 @@ export default function Documents() {
 
     try {
       // Fetch PDF as arraybuffer (better for binary data)
-      const response = await axios.get(`${VITE_API_URL}/admin/pdf/${pdf.id}`, {
+      const response = await axios.get(`${API}/admin/pdf/${pdf.id}`, {
         headers: {
           Authorization: `Bearer ${getToken()}`,
         },
@@ -167,7 +169,7 @@ export default function Documents() {
   const downloadPdf = async (id, pdfName) => {
     try {
       // Fetch PDF as arraybuffer
-      const response = await axios.get(`${VITE_API_URL}/admin/pdf/${id}`, {
+      const response = await axios.get(`${API}/admin/pdf/${id}`, {
         headers: {
           Authorization: `Bearer ${getToken()}`,
         },
