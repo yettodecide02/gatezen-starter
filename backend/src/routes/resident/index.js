@@ -1090,6 +1090,7 @@ router.get("/packages", async (req, res) => {
 
   const fromDate = new Date(from);
   const toDate = new Date(to);
+  toDate.setDate(toDate.getDate() + 1);
 
   if (isNaN(fromDate) || isNaN(toDate)) {
     return res.status(400).json({ error: "invalid date format" });
@@ -1115,7 +1116,7 @@ router.get("/packages", async (req, res) => {
         createdAt: "desc",
       },
     });
-
+    
     return res.status(200).json(packages);
   } catch (e) {
     console.error(e.message);
