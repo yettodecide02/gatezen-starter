@@ -17,41 +17,9 @@ const transporter = nodemailer.createTransport({
 const otps = {};
 
 router.post("/login", async (req, res) => {
-  const { email, password, "g-recaptcha-response": recaptchaToken } = req.body;
+  const { email, password } = req.body;
 
   try {
-    // Verify reCAPTCHA if token is provided
-    if (recaptchaToken) {
-      try {
-        console.log("Verifying reCAPTCHA token for login...");
-        const verifyUrl = "https://www.google.com/recaptcha/api/siteverify";
-        const verifyResponse = await axios.post(
-          verifyUrl,
-          new URLSearchParams({
-            secret: process.env.RECAPTCHA_SECRET_KEY,
-            response: recaptchaToken,
-          })
-        );
-
-        console.log("reCAPTCHA verification result:", verifyResponse.data);
-
-        if (!verifyResponse.data.success) {
-          console.log(
-            "reCAPTCHA verification failed:",
-            verifyResponse.data["error-codes"]
-          );
-          return res.status(400).json({
-            error: "reCAPTCHA verification failed. Please try again.",
-          });
-        }
-      } catch (error) {
-        console.error("reCAPTCHA verification error:", error.message);
-        return res.status(500).json({
-          error: "Failed to verify reCAPTCHA. Please try again.",
-        });
-      }
-    }
-
     const user = await prisma.user.findUnique({
       where: { email, password },
       select: {
@@ -107,19 +75,9 @@ router.post("/community-signup", async (req, res) => {
   console.log("Community signup request received:", {
     ...req.body,
     password: "[HIDDEN]",
-    "g-recaptcha-response": req.body["g-recaptcha-response"]
-      ? "[TOKEN_PRESENT]"
-      : "[TOKEN_MISSING]",
   });
 
-  const {
-    name,
-    email,
-    password,
-    communityName,
-    address,
-    "g-recaptcha-response": recaptchaToken,
-  } = req.body;
+  const { name, email, password, communityName, address } = req.body;
 
   // Validate required fields
   if (!name || !email || !password || !communityName) {
@@ -132,43 +90,6 @@ router.post("/community-signup", async (req, res) => {
     return res
       .status(400)
       .json({ error: "All required fields must be filled" });
-  }
-
-  if (!recaptchaToken) {
-    console.log("reCAPTCHA token missing");
-    return res
-      .status(400)
-      .json({ error: "Please complete the reCAPTCHA test" });
-  }
-
-  // Verify reCAPTCHA with Google
-  try {
-    console.log("Verifying reCAPTCHA token...");
-    const verifyUrl = "https://www.google.com/recaptcha/api/siteverify";
-    const verifyResponse = await axios.post(
-      verifyUrl,
-      new URLSearchParams({
-        secret: process.env.RECAPTCHA_SECRET_KEY,
-        response: recaptchaToken,
-      })
-    );
-
-    console.log("reCAPTCHA verification result:", verifyResponse.data);
-
-    if (!verifyResponse.data.success) {
-      console.log(
-        "reCAPTCHA verification failed:",
-        verifyResponse.data["error-codes"]
-      );
-      return res.status(400).json({
-        error: "reCAPTCHA verification failed. Please try again.",
-      });
-    }
-  } catch (error) {
-    console.error("reCAPTCHA verification error:", error.message);
-    return res.status(500).json({
-      error: "Failed to verify reCAPTCHA. Please try again.",
-    });
   }
 
   try {
@@ -215,51 +136,13 @@ router.post("/community-signup", async (req, res) => {
 });
 
 router.post("/signup", async (req, res) => {
-  const {
-    name,
-    email,
-    password,
-    communityId,
-    blockId,
-    unitId,
-    "g-recaptcha-response": recaptchaToken,
-  } = req.body;
+  const { name, email, password, communityId, blockId, unitId } = req.body;
 
   try {
     if (!communityId) {
       return res.status(400).json({
         error: "Community selection is required.",
       });
-    }
-
-    // Verify reCAPTCHA if token is provided
-    if (recaptchaToken) {
-      try {
-        console.log("Verifying reCAPTCHA token for signup...");
-        const verifyUrl = "https://www.google.com/recaptcha/api/siteverify";
-        const verifyResponse = await axios.post(
-          verifyUrl,
-          new URLSearchParams({
-            secret: process.env.RECAPTCHA_SECRET_KEY,
-            response: recaptchaToken,
-          })
-        );
-
-        if (!verifyResponse.data.success) {
-          console.log(
-            "reCAPTCHA verification failed:",
-            verifyResponse.data["error-codes"]
-          );
-          return res.status(400).json({
-            error: "reCAPTCHA verification failed. Please try again.",
-          });
-        }
-      } catch (error) {
-        console.error("reCAPTCHA verification error:", error.message);
-        return res.status(500).json({
-          error: "Failed to verify reCAPTCHA. Please try again.",
-        });
-      }
     }
 
     const community = await prisma.community.findUnique({
@@ -313,7 +196,6 @@ router.post("/signup", async (req, res) => {
       });
 
       console.log(users);
-      
 
       if (users.length > 4)
         return res.status(400).json({
@@ -394,7 +276,7 @@ router.get("/existing-user", async (req, res) => {
       });
       const jwttoken = jwt.sign(
         { userId: existingUser.id },
-        process.env.JWT_SECRET
+        process.env.JWT_SECRET,
       );
       const data = {
         ...existingUser,

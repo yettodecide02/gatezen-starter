@@ -2,9 +2,14 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { FiMail, FiLock, FiEye, FiEyeOff, FiLogIn } from "react-icons/fi";
 import axios from "axios";
-import { isAdmin, isAuthed, isGatekeeper, setToken, setUser } from "../../lib/auth";
+import {
+  isAdmin,
+  isAuthed,
+  isGatekeeper,
+  setToken,
+  setUser,
+} from "../../lib/auth";
 import GoogleSignin from "../../components/GoogleSignin";
-import ReCAPTCHA from "react-google-recaptcha";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -13,39 +18,30 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [captcha, setCaptcha] = useState(null);
   const [err, setErr] = useState("");
 
-useEffect(() => {
-  if (!isAuthed) return;
+  useEffect(() => {
+    if (!isAuthed) return;
 
-  if (isAdmin()) navigate("/admin");
-  else if (isGatekeeper()) navigate("/gatekeeper");
-  else if(isAuthed()) navigate("/dashboard");
-}, [isAuthed, isAdmin, isGatekeeper, navigate]);
-
+    if (isAdmin()) navigate("/admin");
+    else if (isGatekeeper()) navigate("/gatekeeper");
+    else if (isAuthed()) navigate("/dashboard");
+  }, [isAuthed, isAdmin, isGatekeeper, navigate]);
 
   const submit = async (e) => {
     e.preventDefault();
     setLoading(true);
-    if (!captcha) {
-      setErr("Please complete the reCAPTCHA");
-      setLoading(false);
-      return;
-    }
     try {
       const res = await axios.post(
         import.meta.env.VITE_API_URL + "/auth/login",
         {
           email: email,
           password: password,
-          "g-recaptcha-response": captcha,
-        }
+        },
       );
 
       if (!res) {
         setErr("Invalid email or password");
-        setCaptcha(null);
         return;
       }
 
@@ -63,7 +59,6 @@ useEffect(() => {
       }
     } catch (e) {
       setErr(e.response?.data?.error || "Login failed");
-      setCaptcha(null);
     } finally {
       setLoading(false);
     }
@@ -126,13 +121,6 @@ useEffect(() => {
             >
               Forgot password?
             </Link>
-          </div>
-
-          <div className="flex justify-center">
-            <ReCAPTCHA
-              sitekey={import.meta.env.VITE_RECAPTCHA_SITE_KEY}
-              onChange={(token) => setCaptcha(token)}
-            />
           </div>
 
           <button

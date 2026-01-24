@@ -16,8 +16,13 @@ import {
   FiCheck,
 } from "react-icons/fi";
 import { Link, useNavigate } from "react-router-dom";
-import { isAdmin, isAuthed, isGatekeeper, setToken, setUser } from "../../lib/auth";
-import ReCAPTCHA from "react-google-recaptcha";
+import {
+  isAdmin,
+  isAuthed,
+  isGatekeeper,
+  setToken,
+  setUser,
+} from "../../lib/auth";
 import GoogleSignin from "../../components/GoogleSignin";
 
 export default function Register() {
@@ -43,20 +48,19 @@ export default function Register() {
   // UI states
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [captcha, setCaptcha] = useState(null);
   const [loadingCommunities, setLoadingCommunities] = useState(false);
   const [loadingBlocks, setLoadingBlocks] = useState(false);
   const [loadingUnits, setLoadingUnits] = useState(false);
   const [err, setErr] = useState("");
   const [otpSent, setOtpSent] = useState(false);
 
-useEffect(() => {
-  if (!isAuthed) return;
+  useEffect(() => {
+    if (!isAuthed) return;
 
-  if (isAdmin()) navigate("/admin");
-  else if (isGatekeeper()) navigate("/gatekeeper");
-  else if (isAuthed()) navigate("/dashboard");
-}, [isAuthed, isAdmin, isGatekeeper, navigate]);
+    if (isAdmin()) navigate("/admin");
+    else if (isGatekeeper()) navigate("/gatekeeper");
+    else if (isAuthed()) navigate("/dashboard");
+  }, [isAuthed, isAdmin, isGatekeeper, navigate]);
 
   const fetchCommunities = async () => {
     setLoadingCommunities(true);
@@ -64,7 +68,7 @@ useEffect(() => {
 
     try {
       const response = await axios.get(
-        import.meta.env.VITE_API_URL + "/auth/communities"
+        import.meta.env.VITE_API_URL + "/auth/communities",
       );
 
       if (response.data.success) {
@@ -94,7 +98,7 @@ useEffect(() => {
 
     try {
       const response = await axios.get(
-        `${import.meta.env.VITE_API_URL}/auth/communities/${communityId}/blocks`
+        `${import.meta.env.VITE_API_URL}/auth/communities/${communityId}/blocks`,
       );
 
       if (response.data.success) {
@@ -119,7 +123,7 @@ useEffect(() => {
 
     try {
       const response = await axios.get(
-        `${import.meta.env.VITE_API_URL}/auth/blocks/${blockId}/units`
+        `${import.meta.env.VITE_API_URL}/auth/blocks/${blockId}/units`,
       );
 
       if (response.data.success) {
@@ -169,7 +173,7 @@ useEffect(() => {
       // Check if user exists
       const existingUser = await axios.get(
         import.meta.env.VITE_API_URL + "/auth/existing-user",
-        { params: { email } }
+        { params: { email } },
       );
 
       if (existingUser.data.exists) {
@@ -181,7 +185,7 @@ useEffect(() => {
       // Send OTP
       const otpResponse = await axios.post(
         import.meta.env.VITE_API_URL + "/auth/send-otp",
-        { email: email, operation: "Sign-up" }
+        { email: email, operation: "Sign-up" },
       );
 
       if (otpResponse.data.success) {
@@ -194,7 +198,7 @@ useEffect(() => {
     } catch (error) {
       console.error("Error in step 1:", error);
       setErr(
-        error.response?.data?.error || "Failed to proceed. Please try again."
+        error.response?.data?.error || "Failed to proceed. Please try again.",
       );
     } finally {
       setLoading(false);
@@ -210,7 +214,7 @@ useEffect(() => {
     try {
       const verifyResponse = await axios.post(
         import.meta.env.VITE_API_URL + "/auth/check-otp",
-        { email, otp }
+        { email, otp },
       );
 
       if (verifyResponse.data.success) {
@@ -234,12 +238,6 @@ useEffect(() => {
     setErr("");
     setLoading(true);
 
-    if (!captcha) {
-      setErr("Please complete the reCAPTCHA");
-      setLoading(false);
-      return;
-    }
-
     if (!selectedCommunity) {
       setErr("Please select a community to continue");
       setLoading(false);
@@ -252,15 +250,14 @@ useEffect(() => {
         email,
         password,
         communityId: selectedCommunity,
-        blockId: selectedBlock ,
-        unitId: selectedUnit ,
-        "g-recaptcha-response": captcha,
+        blockId: selectedBlock,
+        unitId: selectedUnit,
       };
       console.log(requestData);
-      
+
       const res = await axios.post(
         import.meta.env.VITE_API_URL + "/auth/signup",
-        requestData
+        requestData,
       );
 
       if (res.status !== 201) {
@@ -291,7 +288,7 @@ useEffect(() => {
     try {
       const otpResponse = await axios.post(
         import.meta.env.VITE_API_URL + "/auth/send-otp",
-        { email: email, operation: "Sign-up" }
+        { email: email, operation: "Sign-up" },
       );
 
       if (otpResponse.data.success) {
@@ -322,8 +319,8 @@ useEffect(() => {
                   currentStep > step
                     ? "bg-green-500 text-white"
                     : currentStep === step
-                    ? "bg-blue-600 text-white ring-4 ring-blue-100"
-                    : "bg-gray-200 text-gray-500"
+                      ? "bg-blue-600 text-white ring-4 ring-blue-100"
+                      : "bg-gray-200 text-gray-500"
                 }`}
               >
                 {currentStep > step ? <FiCheck size={20} /> : step}
@@ -571,8 +568,8 @@ useEffect(() => {
                   {loadingCommunities
                     ? "Loading communities..."
                     : communities.length === 0
-                    ? "No communities available"
-                    : "Select your community"}
+                      ? "No communities available"
+                      : "Select your community"}
                 </option>
                 {communities.map((community) => (
                   <option
@@ -630,8 +627,8 @@ useEffect(() => {
                     {loadingBlocks
                       ? "Loading blocks..."
                       : blocks.length === 0
-                      ? "No blocks available"
-                      : "Select your block (optional)"}
+                        ? "No blocks available"
+                        : "Select your block (optional)"}
                   </option>
                   {blocks.map((block) => (
                     <option key={block.id} value={block.id}>
@@ -676,8 +673,8 @@ useEffect(() => {
                     {loadingUnits
                       ? "Loading units..."
                       : units.length === 0
-                      ? "No units available"
-                      : "Select your unit (optional)"}
+                        ? "No units available"
+                        : "Select your unit (optional)"}
                   </option>
                   {units.map((unit) => (
                     <option key={unit.id} value={unit.id}>
@@ -702,13 +699,6 @@ useEffect(() => {
                 </div>
               </div>
             )}
-
-            <div className="flex justify-center">
-              <ReCAPTCHA
-                sitekey={import.meta.env.VITE_RECAPTCHA_SITE_KEY}
-                onChange={(token) => setCaptcha(token)}
-              />
-            </div>
 
             {err && (
               <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
