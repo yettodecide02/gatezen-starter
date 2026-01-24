@@ -12,7 +12,6 @@ import {
 } from "react-icons/fi";
 import { useNavigate } from "react-router-dom";
 import { isAuthed, setToken, setUser } from "../../lib/auth";
-import ReCAPTCHA from "react-google-recaptcha";
 import supabase from "../../lib/supabase";
 
 export default function Register() {
@@ -38,7 +37,6 @@ export default function Register() {
 
   // UI states
   const [loading, setLoading] = useState(false);
-  const [captcha, setCaptcha] = useState(null);
   const [loadingCommunities, setLoadingCommunities] = useState(false);
   const [loadingBlocks, setLoadingBlocks] = useState(false);
   const [loadingUnits, setLoadingUnits] = useState(false);
@@ -238,12 +236,6 @@ export default function Register() {
     setErr("");
     setLoading(true);
     console.log(await supabase.auth.getUser());
-    
-    if (!captcha) {
-      setErr("Please complete the reCAPTCHA");
-      setLoading(false);
-      return;
-    }
 
     if (!selectedCommunity) {
       setErr("Please select a community to continue");
@@ -259,7 +251,6 @@ export default function Register() {
         communityId: selectedCommunity,
         blockId: selectedBlock,
         unitId: selectedUnit,
-        "g-recaptcha-response": captcha,
       };
       console.log(requestData);
 
@@ -603,12 +594,6 @@ export default function Register() {
               </div>
             )}
 
-            <div className="flex justify-center">
-              <ReCAPTCHA
-                sitekey={import.meta.env.VITE_RECAPTCHA_SITE_KEY}
-                onChange={(token) => setCaptcha(token)}
-              />
-            </div>
 
             {err && (
               <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
