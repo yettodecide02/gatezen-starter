@@ -12,7 +12,6 @@ import {
 } from "react-icons/fi";
 import { setToken, setUser } from "../../lib/auth";
 import axios from "axios";
-import ReCAPTCHA from "react-google-recaptcha";
 
 function AdminSignup() {
   const navigate = useNavigate();
@@ -59,16 +58,11 @@ function AdminSignup() {
       return;
     }
 
-    if (!captcha) {
-      setError("Please complete the reCAPTCHA");
-      setLoading(false);
-      return;
-    }
+
 
     try {
       const requestData = {
         ...formData,
-        "g-recaptcha-response": captcha,
       };
 
       const res = await axios.post(
@@ -238,14 +232,6 @@ function AdminSignup() {
                   className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-shadow"
                 />
               </div>
-            </div>
-
-            {/* reCAPTCHA */}
-            <div className="flex justify-center py-2">
-              <ReCAPTCHA
-                sitekey={import.meta.env.VITE_RECAPTCHA_SITE_KEY}
-                onChange={(token) => setCaptcha(token)}
-              />
             </div>
 
             {/* Submit Button */}
