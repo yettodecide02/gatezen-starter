@@ -11,7 +11,13 @@ const router = express.Router();
  * Protected by a shared secret so only the scheduler can call it.
  */
 router.get("/booking-reminder", async (req, res) => {
-  const secret = req.headers["x-cron-secret"] || req.query.secret;
+  // Vercel cron sends: Authorization: Bearer <CRON_SECRET>
+  const authHeader = req.headers["authorization"];
+  const bearerSecret = authHeader?.startsWith("Bearer ")
+    ? authHeader.slice(7)
+    : null;
+  const secret =
+    bearerSecret || req.headers["x-cron-secret"] || req.query.secret;
   if (secret !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: "Unauthorized" });
   }

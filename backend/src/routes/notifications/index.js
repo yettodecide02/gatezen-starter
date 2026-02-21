@@ -17,7 +17,8 @@ router.post("/token", async (req, res) => {
   if (!pushToken) {
     return res.status(400).json({ error: "pushToken is required" });
   }
-
+  console.log(pushToken, req.user.name);
+  
   try {
     await prisma.user.update({
       where: { id: req.user.id },

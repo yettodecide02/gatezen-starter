@@ -77,7 +77,13 @@ app.get("/events", (req, res) => {
   });
 });
 
-const port = process.env.PORT || 5000;
-app.listen(port, "0.0.0.0", () => {
-  console.log(`GateZen backend running`);
-});
+// Export for Vercel serverless
+export default app;
+
+// Start server only in non-serverless environments (local dev)
+if (process.env.VERCEL !== "1") {
+  const port = process.env.PORT || 5000;
+  app.listen(port, "0.0.0.0", () => {
+    console.log(`GateZen backend running on port ${port}`);
+  });
+}
