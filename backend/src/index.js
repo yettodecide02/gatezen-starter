@@ -6,8 +6,10 @@ import authRoutes from "./routes/auth/index.js";
 import adminRoutes from "./routes/admin/index.js";
 import residentRoutes from "./routes/resident/index.js";
 import gatekeeperRoutes from "./routes/gatekeeper/index.js";
+import notificationsRoutes from "./routes/notifications/index.js";
+import cronRoutes from "./routes/cron/index.js";
 
-import { limiter } from "./middleware/auth.js"
+import { limiter } from "./middleware/auth.js";
 
 dotenv.config();
 
@@ -17,7 +19,7 @@ app.use(
   cors({
     allowedHeaders: ["Authorization", "Content-Type"],
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  })
+  }),
 );
 app.use(express.json());
 app.use(limiter);
@@ -37,6 +39,8 @@ app.use("/auth", authRoutes);
 app.use("/admin", adminRoutes);
 app.use("/resident", residentRoutes);
 app.use("/gatekeeper", gatekeeperRoutes);
+app.use("/notifications", notificationsRoutes);
+app.use("/cron", cronRoutes);
 
 global.eventClients = [];
 

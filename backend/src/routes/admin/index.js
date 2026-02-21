@@ -5,6 +5,10 @@ import jwt from "jsonwebtoken";
 import multer from "multer";
 import { UserStatus, FacilityType, PriceType } from "@prisma/client";
 import { authMiddleware } from "../../middleware/auth.js";
+import {
+  sendPushNotification,
+  sendBulkPushNotifications,
+} from "../../../lib/notifications.js";
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -48,7 +52,7 @@ router.get("/dashboard", async (req, res) => {
         },
         users: {
           where: { status: UserStatus.PENDING },
-          select: { id: true, name: true, email: true },
+          select: { id: true, name: true, email: true, createdAt: true },
         },
       },
     });
@@ -470,8 +474,20 @@ router.post("/maintenance/update", async (req, res) => {
     const updatedTicket = await prisma.ticket.update({
       where: { id: ticketId },
       data: { status },
-      include: { user: { select: { name: true, email: true } } },
+      include: {
+        user: { select: { name: true, email: true, pushToken: true } },
+      },
     });
+
+    // Push notification to the ticket owner
+    if (updatedTicket.user?.pushToken) {
+      await sendPushNotification(
+        updatedTicket.user.pushToken,
+        "🔧 Maintenance Update",
+        `Your ticket "${updatedTicket.title}" status changed to ${updatedTicket.status.replace("_", " ")}`,
+        { type: "TICKET_UPDATE", ticketId: updatedTicket.id },
+      );
+    }
 
     res
       .status(200)
@@ -533,6 +549,22 @@ router.post("/create-announcement", async (req, res) => {
       },
       select: { id: true, title: true, content: true, createdAt: true },
     });
+
+    // Push notification to all approved residents in the community
+    const residents = await prisma.user.findMany({
+      where: {
+        communityId: community.id,
+        status: "APPROVED",
+        pushToken: { not: null },
+      },
+      select: { pushToken: true },
+    });
+    await sendBulkPushNotifications(
+      residents.map((r) => r.pushToken),
+      "📢 New Announcement",
+      title,
+      { type: "ANNOUNCEMENT", announcementId: announcement.id },
+    );
 
     res.status(201).json({ message: "Announcement created", announcement });
   } catch (e) {
@@ -1128,7 +1160,7 @@ router.get("/community", async (req, res) => {
         ...facility,
         facilityType: facility.facilityType.toLowerCase(),
         priceType: facility.priceType?.toLowerCase(),
-      })
+      }),
     );
 
     res.status(200).json({
@@ -1232,7 +1264,7 @@ router.post("/community", async (req, res) => {
           return await prisma.facilityConfiguration.create({
             data: configData,
           });
-        })
+        }),
       );
 
       // Create actual facility records for enabled facilities
@@ -1281,7 +1313,7 @@ router.post("/community", async (req, res) => {
         ...facility,
         facilityType: facility.facilityType.toLowerCase(),
         priceType: facility.priceType?.toLowerCase(),
-      })
+      }),
     );
 
     res.status(200).json({
@@ -1533,7 +1565,7 @@ router.get(
               facilityType: facilityConfig.facilityType.toLowerCase(),
               priceType: facilityConfig.priceType?.toLowerCase(),
             },
-          }))
+          })),
         );
       }
 
@@ -1557,7 +1589,7 @@ router.get(
         error: error.message,
       });
     }
-  }
+  },
 );
 
 // Update specific facility configuration
@@ -1740,7 +1772,7 @@ router.patch(
         error: error.message,
       });
     }
-  }
+  },
 );
 
 // Delete community configuration
@@ -1900,7 +1932,7 @@ router.post("/gatekeeper-signup", async (req, res) => {
     });
     const jwttoken = jwt.sign(
       { userId: gatekeeper.id },
-      process.env.JWT_SECRET
+      process.env.JWT_SECRET,
     );
     return res.status(201).json({ user: gatekeeper, jwttoken });
   } catch (e) {
@@ -2050,7 +2082,6 @@ router.get("/pdf/:id", async (req, res) => {
   }
 });
 
-
 router.delete("/pdf/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -2077,6 +2108,5 @@ router.delete("/pdf/:id", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
-
 
 export default router;

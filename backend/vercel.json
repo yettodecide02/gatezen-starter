@@ -1,4 +1,10 @@
 {
+  "crons": [
+    {
+      "path": "/cron/booking-reminder?secret=REPLACE_WITH_CRON_SECRET",
+      "schedule": "* * * * *"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
