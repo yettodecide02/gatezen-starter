@@ -266,8 +266,8 @@ router.get("/visitors", async (req, res) => {
       status: visitor.checkOutAt
         ? "checked_out"
         : visitor.checkInAt
-        ? "checked_in"
-        : "pending",
+          ? "checked_in"
+          : "pending",
     }));
 
     res.status(200).json(transformedVisitors);
@@ -355,7 +355,7 @@ router.post("/visitor-creation", async (req, res) => {
           width: 300,
           margin: 2,
           errorCorrectionLevel: "M",
-        }
+        },
       );
 
       const qrCid = `qr-${visitor.id}@gatezen`;
@@ -748,7 +748,7 @@ router.post("/bookings", async (req, res) => {
 
     const merged = mergeIntervals(intervals);
     const alreadyBookedMins = Math.round(
-      merged.reduce((sum, [s, e]) => sum + (e - s), 0) / 60000
+      merged.reduce((sum, [s, e]) => sum + (e - s), 0) / 60000,
     );
 
     if (alreadyBookedMins > 180) {
@@ -930,6 +930,7 @@ router.get("/announcements", async (req, res) => {
       },
       orderBy: { createdAt: "desc" },
     });
+    
 
     res.status(200).json({
       success: true,
@@ -1116,7 +1117,7 @@ router.get("/packages", async (req, res) => {
         createdAt: "desc",
       },
     });
-    
+
     return res.status(200).json(packages);
   } catch (e) {
     console.error(e.message);
@@ -1239,15 +1240,53 @@ router.get("/pdf/:id", async (req, res) => {
   try {
     const pdf = await prisma.pdfs.findUnique({ where: { id } });
 
-    if (!pdf) return res.status(404).send("PDF not found");
+    if (!pdf) {
+      console.error("PDF not found:", id);
+      return res.status(404).json({ error: "PDF not found" });
+    }
 
+    if (!pdf.content) {
+      console.error("PDF content is empty:", id);
+      return res.status(400).json({ error: "PDF content is empty" });
+    }
+
+    // Convert content to Buffer if it's a string (base64) or already a Buffer
+    let pdfBuffer;
+    try {
+      if (typeof pdf.content === "string") {
+        // Try to decode from base64
+        pdfBuffer = Buffer.from(pdf.content, "base64");
+      } else if (Buffer.isBuffer(pdf.content)) {
+        pdfBuffer = pdf.content;
+      } else if (pdf.content instanceof Uint8Array) {
+        pdfBuffer = Buffer.from(pdf.content);
+      } else {
+        console.error("Unknown PDF content type:", typeof pdf.content);
+        return res.status(400).json({ error: "Invalid PDF content format" });
+      }
+    } catch (bufferError) {
+      console.error("Error converting PDF content:", bufferError);
+      return res.status(400).json({ error: "Failed to process PDF content" });
+    }
+
+    if (!pdfBuffer || pdfBuffer.length === 0) {
+      console.error("PDF buffer is empty after conversion");
+      return res.status(400).json({ error: "PDF content is empty" });
+    }
+
+    const fileName = pdf.name.endsWith(".pdf") ? pdf.name : `${pdf.name}.pdf`;
+    
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `inline; filename="${pdf.name}.pdf"`);
+    res.setHeader("Content-Length", pdfBuffer.length);
+    res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(fileName)}"`);
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
 
-    res.end(pdf.content); // IMPORTANT!!!
+    res.end(pdfBuffer);
   } catch (e) {
-    console.error("Error fetching PDFs:", e);
-    res.status(500).json({ error: "Server error" });
+    console.error("Error fetching PDF:", e.message, e.stack);
+    res.status(500).json({ error: "Server error: " + e.message });
   }
 });
 

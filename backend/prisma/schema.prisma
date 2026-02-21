@@ -76,6 +76,7 @@ model User {
   unitId      String?
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
+  pushToken   String?
   bookings    Booking[]
   comments    Comment[]
   tickets     Ticket[]

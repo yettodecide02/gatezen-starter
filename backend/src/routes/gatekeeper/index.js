@@ -2,6 +2,7 @@ import express from "express";
 import prisma from "../../../lib/prisma.js";
 import { authMiddleware } from "../../middleware/auth.js";
 import nodemailer from "nodemailer";
+import { sendPushNotification } from "../../../lib/notifications.js";
 
 const router = express.Router();
 
@@ -75,8 +76,8 @@ router.get("/", async (req, res) => {
       status: visitor.checkOutAt
         ? "checked_out"
         : visitor.checkInAt
-        ? "checked_in"
-        : "pending",
+          ? "checked_in"
+          : "pending",
     }));
 
     res.json(transformedVisitors);
@@ -130,6 +131,7 @@ router.post("/", async (req, res) => {
           select: {
             name: true,
             id: true,
+            pushToken: true,
             unit: {
               select: {
                 id: true,
@@ -147,6 +149,16 @@ router.post("/", async (req, res) => {
       },
     });
 
+    // Push notification to resident on check-in
+    if (status?.toLowerCase() === "checked_in" && visitor.user?.pushToken) {
+      await sendPushNotification(
+        visitor.user.pushToken,
+        "🚪 Visitor Arrived",
+        `${visitor.name} has checked in`,
+        { type: "VISITOR_CHECKIN", visitorId: visitor.id },
+      );
+    }
+
     // Send notification email for GUEST type visitors when checked out
     if (
       visitor.visitorType === "GUEST" &&
@@ -158,7 +170,7 @@ router.post("/", async (req, res) => {
           to: visitor.contact, // Assuming contact field contains email
           subject: "Visit Completed",
           text: `Dear ${visitor.name},\n\nYour visit on ${new Date(
-            visitor.visitDate
+            visitor.visitDate,
           ).toLocaleString()} has been completed. Thank you for visiting.\n\nRegards,\nGateZen Team`,
         });
       } catch (error) {
@@ -175,8 +187,8 @@ router.post("/", async (req, res) => {
       status: visitor.checkOutAt
         ? "checked_out"
         : visitor.checkInAt
-        ? "checked_in"
-        : "pending",
+          ? "checked_in"
+          : "pending",
     };
 
     res.json(transformedVisitor);
@@ -326,8 +338,8 @@ router.get("/scan", async (req, res) => {
       status: visitor.checkOutAt
         ? "checked_out"
         : visitor.checkInAt
-        ? "checked_in"
-        : "pending",
+          ? "checked_in"
+          : "pending",
     };
 
     return res.status(200).json({ visitor: transformedVisitor });
@@ -415,8 +427,8 @@ router.get("/visitors", async (req, res) => {
       status: visitor.checkOutAt
         ? "checked_out"
         : visitor.checkInAt
-        ? "checked_in"
-        : "pending",
+          ? "checked_in"
+          : "pending",
     }));
 
     res.json(transformedVisitors);
@@ -457,6 +469,7 @@ router.post("/checkin/:id", async (req, res) => {
           select: {
             name: true,
             id: true,
+            pushToken: true,
             unit: {
               select: {
                 id: true,
@@ -473,6 +486,16 @@ router.post("/checkin/:id", async (req, res) => {
         },
       },
     });
+
+    // Push notification to resident
+    if (updatedVisitor.userId && updatedVisitor.user?.pushToken) {
+      await sendPushNotification(
+        updatedVisitor.user.pushToken,
+        "🚪 Visitor Arrived",
+        `${updatedVisitor.name} has checked in`,
+        { type: "VISITOR_CHECKIN", visitorId: updatedVisitor.id },
+      );
+    }
 
     const transformedVisitor = {
       ...updatedVisitor,
@@ -673,6 +696,21 @@ router.post("/packages", async (req, res) => {
         image: image,
       },
     });
+
+    // Push notification to the resident whose package arrived
+    const resident = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { pushToken: true },
+    });
+    if (resident?.pushToken) {
+      await sendPushNotification(
+        resident.pushToken,
+        "📦 Package Arrived",
+        `Your package "${name}" has arrived at the gate`,
+        { type: "PACKAGE", packageId: result.id },
+      );
+    }
+
     res.status(200).json({ status: "success" });
   } catch (e) {
     console.error(e);
@@ -702,7 +740,9 @@ router.put("/packages/:id", async (req, res) => {
       },
     });
 
-    const base64Data = updated.image.includes("base64,") ? updated.image.split("base64,")[1] : updated.image;
+    const base64Data = updated.image.includes("base64,")
+      ? updated.image.split("base64,")[1]
+      : updated.image;
 
     await transporter.sendMail({
       from: process.env.EMAIL_ID,

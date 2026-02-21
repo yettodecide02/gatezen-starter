@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
 import prisma from "../../../lib/prisma.js";
 import axios from "axios";
+import { sendBulkPushNotifications } from "../../../lib/notifications.js";
 
 const router = express.Router();
 
@@ -234,6 +235,22 @@ router.post("/signup", async (req, res) => {
     });
 
     const jwttoken = jwt.sign({ userId: user.id }, process.env.JWT_SECRET);
+
+    // Push notification to all admins of the community
+    const admins = await prisma.user.findMany({
+      where: {
+        communityId: community.id,
+        role: "ADMIN",
+        pushToken: { not: null },
+      },
+      select: { pushToken: true },
+    });
+    await sendBulkPushNotifications(
+      admins.map((a) => a.pushToken),
+      "👤 New Registration",
+      `${name} has registered and is pending approval`,
+      { type: "NEW_USER", userId: user.id },
+    );
 
     const data = { ...user, communityName: community.name };
 
