@@ -42,45 +42,8 @@ app.use("/gatekeeper", gatekeeperRoutes);
 app.use("/notifications", notificationsRoutes);
 app.use("/cron", cronRoutes);
 
-global.eventClients = [];
-
-function broadcastEvent(type, data) {
-  global.eventClients.forEach((client) => {
-    try {
-      client.write(`data: ${JSON.stringify({ type, data })}\n\n`);
-    } catch (error) {
-      console.error("Error broadcasting event:", error);
-    }
-  });
-}
-
-global.broadcastEvent = broadcastEvent;
-
-app.get("/events", (req, res) => {
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Cache-Control",
-  });
-
-  global.eventClients.push(res);
-
-  res.write(`data: ${JSON.stringify({ type: "connected", data: {} })}\n\n`);
-
-  req.on("close", () => {
-    const index = global.eventClients.indexOf(res);
-    if (index !== -1) {
-      global.eventClients.splice(index, 1);
-    }
-  });
-});
-
-// Export for Vercel serverless
 export default app;
 
-// Start server only in non-serverless environments (local dev)
 if (process.env.VERCEL !== "1") {
   const port = process.env.PORT || 5000;
   app.listen(port, "0.0.0.0", () => {

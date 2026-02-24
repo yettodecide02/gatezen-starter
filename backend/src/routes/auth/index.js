@@ -310,7 +310,7 @@ router.get("/existing-user", async (req, res) => {
 
 router.post("/send-otp", async (req, res) => {
   const { email, operation } = req.body;
-  if ((!email, !operation)) {
+  if (!email || !operation) {
     return res.status(400).send("Email and operation are required");
   }
 

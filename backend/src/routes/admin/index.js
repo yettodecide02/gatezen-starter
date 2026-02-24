@@ -1887,7 +1887,6 @@ router.delete("/bookings/:id", async (req, res) => {
   try {
     const { id } = req.params;
     await prisma.booking.delete({ where: { id } });
-    broadcastEvent("booking", { action: "deleted", bookingId: id });
     res.json({ message: "Booking deleted" });
   } catch (err) {
     console.error("Error deleting booking:", err);

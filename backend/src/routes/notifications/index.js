@@ -6,11 +6,6 @@ const router = express.Router();
 
 router.use(authMiddleware);
 
-/**
- * POST /notifications/token
- * Save / update the Expo push token for the authenticated user.
- * Called by the mobile app right after login.
- */
 router.post("/token", async (req, res) => {
   const { pushToken } = req.body;
 
