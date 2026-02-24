@@ -15,9 +15,6 @@ function checkAuth(req, res, next) {
   next();
 }
 
-// Use global broadcastEvent function
-const broadcastEvent = global.broadcastEvent || (() => {});
-
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
@@ -162,7 +159,6 @@ router.post("/maintenance", async (req, res) => {
       },
     });
 
-    broadcastEvent("maintenance", { action: "created", ticket });
     res.status(201).json(ticket);
   } catch (err) {
     console.error("Error creating ticket:", err);
@@ -187,8 +183,6 @@ router.post("/maintenance/:id/comments", async (req, res) => {
         },
       },
     });
-
-    broadcastEvent("maintenance", { action: "comment", ticketId: id, comment });
 
     res.status(201).json({
       id: comment.id,
@@ -349,52 +343,59 @@ router.post("/visitor-creation", async (req, res) => {
 
     // Send QR code email for GUEST visitors
     if (visitor.visitorType === "GUEST") {
-      const qrPngBuffer = await qrcode.toBuffer(
-        `${process.env.BACKEND_URL}/gatekeeper/scan?id=${visitor.id}&communityId=${visitor.communityId}`,
-        {
-          type: "png",
-          width: 300,
-          margin: 2,
-          errorCorrectionLevel: "M",
-        },
-      );
+      if (!process.env.EMAIL_ID || !process.env.EMAIL_PASSWORD) {
+        console.warn("Email credentials not configured — skipping QR email");
+      } else {
+        try {
+          const qrPngBuffer = await qrcode.toBuffer(
+            `${process.env.BACKEND_URL}/gatekeeper/scan?id=${visitor.id}&communityId=${visitor.communityId}`,
+            {
+              type: "png",
+              width: 300,
+              margin: 2,
+              errorCorrectionLevel: "M",
+            },
+          );
 
-      const qrCid = `qr-${visitor.id}@gatezen`;
+          const qrCid = `qr-${visitor.id}@gatezen`;
+          const subject = `Your GateZen visitor pass (QR) — ${name}`;
 
-      const subject = `Your GateZen visitor pass (QR) — ${name}`;
-      await transporter.sendMail({
-        from: process.env.EMAIL_ID,
-        to: contact, // contact field contains email for GUEST type
-        subject,
-        text: `Hi ${name},\n\nPlease scan this QR code at the entrance to check in:`,
-        html: `
-        <div style="font-family: Arial, sans-serif; line-height: 1.5; color: #111;">
-          <h2 style="margin: 0 0 12px;">Hi ${name},</h2>
-          <p style="margin: 0 0 12px;">Your visitor pass is ready. Show this QR at the gate:</p>
-          <p style="margin: 0 0 16px;"><img src="cid:${qrCid}" alt="Visitor QR Code" width="300" height="300" style="display:block;border:0;outline:none;text-decoration:none;" /></p>
-          <p style="margin: 0;">Thanks,<br/>GateZen</p>
-        </div>
-      `,
-        attachments: [
-          {
-            filename: "visitor-qr.png",
-            content: qrPngBuffer,
-            contentType: "image/png",
-            cid: qrCid,
-          },
-        ],
-      });
+          await transporter.sendMail({
+            from: process.env.EMAIL_ID,
+            to: contact,
+            subject,
+            text: `Hi ${name},\n\nPlease scan this QR code at the entrance to check in:`,
+            html: `
+            <div style="font-family: Arial, sans-serif; line-height: 1.5; color: #111;">
+              <h2 style="margin: 0 0 12px;">Hi ${name},</h2>
+              <p style="margin: 0 0 12px;">Your visitor pass is ready. Show this QR at the gate:</p>
+              <p style="margin: 0 0 16px;"><img src="cid:${qrCid}" alt="Visitor QR Code" width="300" height="300" style="display:block;border:0;outline:none;text-decoration:none;" /></p>
+              <p style="margin: 0;">Thanks,<br/>GateZen</p>
+            </div>
+          `,
+            attachments: [
+              {
+                filename: "visitor-qr.png",
+                content: qrPngBuffer,
+                contentType: "image/png",
+                cid: qrCid,
+              },
+            ],
+          });
+        } catch (emailErr) {
+          console.error("Failed to send QR email:", emailErr);
+          // Visitor was already created — don't fail the request
+        }
+      }
     }
 
     return res.status(201).json({
       visitor: visitor,
-      message: "Visitor created and QR email dispatched",
+      message: "Visitor created successfully",
     });
   } catch (err) {
-    console.error("Error creating visitor / sending QR email:", err);
-    return res
-      .status(500)
-      .json({ error: "Failed to create visitor or send email" });
+    console.error("Error creating visitor:", err);
+    return res.status(500).json({ error: "Failed to create visitor" });
   }
 });
 
@@ -516,6 +517,12 @@ router.get("/bookings", async (req, res) => {
     const dayStart = new Date(`${date}T00:00:00.000Z`);
     const dayEnd = new Date(dayStart.getTime() + 24 * 3600e3);
 
+    if (isNaN(dayStart.getTime())) {
+      return res
+        .status(400)
+        .json({ error: "Invalid date format. Use YYYY-MM-DD" });
+    }
+
     // Determine if this is a configuration ID or actual facility ID
     let actualFacilityIds = [];
 
@@ -575,6 +582,12 @@ router.get("/user-bookings", async (req, res) => {
 
     const dayStart = new Date(`${date}T00:00:00.000Z`);
     const dayEnd = new Date(dayStart.getTime() + 24 * 3600e3);
+
+    if (isNaN(dayStart.getTime())) {
+      return res
+        .status(400)
+        .json({ error: "Invalid date format. Use YYYY-MM-DD" });
+    }
 
     const bookings = await prisma.booking.findMany({
       where: {
@@ -814,11 +827,6 @@ router.post("/bookings", async (req, res) => {
       },
     });
 
-    broadcastEvent("booking", {
-      action: "created",
-      bookingId: created.id,
-      facilityId: actualFacility.id,
-    });
 
     res.status(201).json({ ...created, status: "confirmed" });
   } catch (err) {
@@ -834,11 +842,6 @@ router.patch("/bookings/:id/cancel", async (req, res) => {
     const updated = await prisma.booking.update({
       where: { id },
       data: { status: "CANCELLED" },
-    });
-    broadcastEvent("booking", {
-      action: "cancelled",
-      bookingId: id,
-      facilityId: updated.facilityId,
     });
     res.json({ ...updated, status: "cancelled" });
   } catch (err) {
