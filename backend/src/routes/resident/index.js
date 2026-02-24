@@ -45,7 +45,11 @@ router.get("/dashboard", async (req, res) => {
       where: { communityId: communityId },
       select: { id: true, title: true, content: true, createdAt: true },
       orderBy: { createdAt: "desc" },
-      take: 10,
+      take: 5,
+    });
+
+    const announcementsCount = await prisma.announcement.count({
+      where: { communityId: communityId },
     });
 
     const tickets = await prisma.ticket.findMany({
@@ -71,6 +75,7 @@ router.get("/dashboard", async (req, res) => {
 
     res.status(200).json({
       announcements: announcements,
+      announcementsCount: announcementsCount,
       maintenance: tickets,
       payments: payments,
       bookings: bookings,
@@ -217,18 +222,14 @@ router.get("/visitors", async (req, res) => {
       whereClause.userId = String(userId);
     }
 
-    // Date range filtering
+    // Date range filtering — frontend sends full ISO local-day boundaries
     whereClause.visitDate = {};
     if (from) {
-      const fromDate = new Date(from);
-      fromDate.setUTCHours(0, 0, 0, 0); // Start of the day
-      whereClause.visitDate.gte = fromDate;
+      whereClause.visitDate.gte = new Date(from);
     }
 
     if (to) {
-      const toDate = new Date(to);
-      toDate.setUTCHours(23, 59, 59, 999); // End of the day
-      whereClause.visitDate.lte = toDate;
+      whereClause.visitDate.lte = new Date(to);
     }
 
     const visitors = await prisma.visitor.findMany({
@@ -910,6 +911,40 @@ router.get("/profile", async (req, res) => {
   }
 });
 
+// Update resident profile (name only)
+router.patch("/profile", async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { name } = req.body;
+
+    if (!name || typeof name !== "string" || !name.trim()) {
+      return res.status(400).json({ error: "name is required" });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: { name: name.trim() },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      data: updated,
+    });
+  } catch (error) {
+    console.error("Error updating profile:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to update profile",
+      error: error.message,
+    });
+  }
+});
+
 // Get all announcements for the resident's community
 router.get("/announcements", async (req, res) => {
   try {
@@ -930,7 +965,6 @@ router.get("/announcements", async (req, res) => {
       },
       orderBy: { createdAt: "desc" },
     });
-    
 
     res.status(200).json({
       success: true,
@@ -1275,10 +1309,13 @@ router.get("/pdf/:id", async (req, res) => {
     }
 
     const fileName = pdf.name.endsWith(".pdf") ? pdf.name : `${pdf.name}.pdf`;
-    
+
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Length", pdfBuffer.length);
-    res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(fileName)}"`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${encodeURIComponent(fileName)}"`,
+    );
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
@@ -1287,6 +1324,93 @@ router.get("/pdf/:id", async (req, res) => {
   } catch (e) {
     console.error("Error fetching PDF:", e.message, e.stack);
     res.status(500).json({ error: "Server error: " + e.message });
+  }
+});
+
+// Get kid passes for a resident
+router.get("/kid-passes", async (req, res) => {
+  try {
+    const { userId, communityId } = req.query;
+
+    if (!userId || !communityId) {
+      return res.status(400).json({ error: "Missing userId or communityId" });
+    }
+
+    const kidPasses = await prisma.kidPass.findMany({
+      where: {
+        userId: String(userId),
+        communityId: String(communityId),
+      },
+      include: {
+        user: {
+          select: {
+            name: true,
+            id: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    res.status(200).json(kidPasses);
+  } catch (e) {
+    console.error("Error fetching kid passes:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Create a kid pass
+router.post("/kid-passes", async (req, res) => {
+  try {
+    const {
+      childName,
+      childAge,
+      parentName,
+      contact,
+      permissions,
+      validFrom,
+      validTo,
+      communityId,
+      userId,
+    } = req.body;
+
+    const actualUserId = userId || req.user?.id;
+
+    if (
+      !childName ||
+      !parentName ||
+      !contact ||
+      !communityId ||
+      !actualUserId
+    ) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    if (!validFrom || !validTo) {
+      return res.status(400).json({ error: "Valid dates are required" });
+    }
+
+    const kidPass = await prisma.kidPass.create({
+      data: {
+        childName,
+        childAge: childAge ? parseInt(childAge) : null,
+        parentName,
+        contact,
+        permissions: permissions || "Standard access",
+        validFrom: new Date(validFrom),
+        validTo: new Date(validTo),
+        communityId: String(communityId),
+        userId: String(actualUserId),
+        status: "PENDING",
+      },
+    });
+
+    res.status(201).json(kidPass);
+  } catch (err) {
+    console.error("Error creating kid pass:", err);
+    res.status(500).json({ error: "Failed to create kid pass" });
   }
 });
 

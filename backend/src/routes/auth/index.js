@@ -2,7 +2,6 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
 import prisma from "../../../lib/prisma.js";
-import axios from "axios";
 import { sendBulkPushNotifications } from "../../../lib/notifications.js";
 
 const router = express.Router();
