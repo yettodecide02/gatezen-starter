@@ -31,6 +31,7 @@ model Community {
   tickets          Ticket[]
   users            User[]
   visitors         Visitor[]
+  kidPasses        KidPass[]
   payments         Payment[]
   packages         Packages[]
   pdfs             Pdfs[]
@@ -84,6 +85,7 @@ model User {
   community   Community  @relation(fields: [communityId], references: [id], onDelete: Cascade)
   unit        Unit?      @relation(fields: [unitId], references: [id], onDelete: SetNull)
   visitors    Visitor[]  @relation("UserVisitors")
+  kidPasses   KidPass[]  @relation("UserKidPasses")
   packages    Packages[]
 
   @@index([communityId])
@@ -126,6 +128,31 @@ model Visitor {
   @@index([userId])
   @@index([contact])
   @@index([vehicleNo])
+}
+
+model KidPass {
+  id          String    @id @default(uuid())
+  childName   String
+  childAge    Int?
+  parentName  String
+  contact     String
+  permissions String    // Description of permissions/restrictions
+  validFrom   DateTime
+  validTo     DateTime
+  checkInAt   DateTime?
+  checkOutAt  DateTime?
+  status      KidPassStatus @default(PENDING)
+  userId      String
+  communityId String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  user        User      @relation("UserKidPasses", fields: [userId], references: [id], onDelete: Cascade)
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([communityId])
+  @@index([communityId, validFrom])
+  @@index([userId])
+  @@index([status])
 }
 
 model Ticket {
@@ -355,4 +382,12 @@ enum PaymentStatus {
 enum PackageStatus {
   PENDING
   PICKED
+}
+
+enum KidPassStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CHECKED_IN
+  CHECKED_OUT
 }

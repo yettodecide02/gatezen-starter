@@ -457,13 +457,40 @@ router.get("/maintenance", async (req, res) => {
 
     const maintenance = await prisma.ticket.findMany({
       where: { communityId: community.id },
-      include: { user: { select: { name: true, email: true } } },
+      include: {
+        user: { select: { name: true, email: true } },
+        comments: {
+          include: { user: { select: { name: true, role: true } } },
+          orderBy: { createdAt: "asc" },
+        },
+      },
       orderBy: { createdAt: "desc" },
     });
     res.status(200).json({ maintenance });
   } catch (e) {
     console.error("Error fetching maintenance requests:", e);
     res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.post("/maintenance/:id/comments", async (req, res) => {
+  const { id } = req.params;
+  const { text } = req.body;
+  const userId = req.user.id;
+
+  if (!text?.trim()) {
+    return res.status(400).json({ error: "Comment text is required" });
+  }
+
+  try {
+    const comment = await prisma.comment.create({
+      data: { text: text.trim(), userId, ticketId: id },
+      include: { user: { select: { name: true, role: true } } },
+    });
+    res.status(201).json({ comment });
+  } catch (e) {
+    console.error("Error adding comment:", e);
+    res.status(500).json({ error: "Failed to add comment" });
   }
 });
 

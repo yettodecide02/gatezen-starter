@@ -797,4 +797,116 @@ router.get("/residents", async (req, res) => {
   }
 });
 
+// Get all kid passes for the gatekeeper's community
+router.get("/kid-passes", async (req, res) => {
+  try {
+    const kidPasses = await prisma.kidPass.findMany({
+      where: {
+        communityId: req.user.communityId,
+      },
+      include: {
+        user: {
+          select: {
+            name: true,
+            id: true,
+            unit: {
+              select: {
+                id: true,
+                number: true,
+                block: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    const transformedPasses = kidPasses.map((pass) => ({
+      ...pass,
+      parentUnitNumber: pass.user?.unit?.number || "N/A",
+      parentBlockName: pass.user?.unit?.block?.name || "N/A",
+    }));
+
+    res.json(transformedPasses);
+  } catch (error) {
+    console.error("Error fetching kid passes:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+// Update kid pass status (check in/out)
+router.post("/kid-passes/:id", async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+
+  if (!id || !status) {
+    return res.status(400).json({ error: "Missing kidPassId or status" });
+  }
+
+  try {
+    let updateData = { updatedAt: new Date() };
+
+    switch (status.toLowerCase()) {
+      case "approved":
+        updateData.status = "APPROVED";
+        break;
+      case "rejected":
+        updateData.status = "REJECTED";
+        break;
+      case "checked_in":
+        updateData.status = "CHECKED_IN";
+        updateData.checkInAt = new Date();
+        break;
+      case "checked_out":
+        updateData.status = "CHECKED_OUT";
+        updateData.checkOutAt = new Date();
+        break;
+      default:
+        return res.status(400).json({ error: "Invalid status" });
+    }
+
+    const kidPass = await prisma.kidPass.update({
+      where: { id: String(id) },
+      data: updateData,
+      include: {
+        user: {
+          select: {
+            name: true,
+            id: true,
+            unit: {
+              select: {
+                number: true,
+                block: {
+                  select: {
+                    name: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const transformedPass = {
+      ...kidPass,
+      parentUnitNumber: kidPass.user?.unit?.number || "N/A",
+      parentBlockName: kidPass.user?.unit?.block?.name || "N/A",
+    };
+
+    res.json(transformedPass);
+  } catch (error) {
+    console.error("Error updating kid pass:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 export default router;
