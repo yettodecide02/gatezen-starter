@@ -1,6 +1,7 @@
+import "dotenv/config";
+
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 
 import authRoutes from "./routes/auth/index.js";
 import adminRoutes from "./routes/admin/index.js";
@@ -10,8 +11,6 @@ import notificationsRoutes from "./routes/notifications/index.js";
 import cronRoutes from "./routes/cron/index.js";
 
 import { limiter } from "./middleware/auth.js";
-
-dotenv.config();
 
 const app = express();
 
