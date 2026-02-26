@@ -577,10 +577,11 @@ router.post("/create-announcement", async (req, res) => {
       select: { id: true, title: true, content: true, createdAt: true },
     });
 
-    // Push notification to all approved residents in the community
+    // Push notification to all approved residents in the community (exclude admins)
     const residents = await prisma.user.findMany({
       where: {
         communityId: community.id,
+        role: "RESIDENT",
         status: "APPROVED",
         pushToken: { not: null },
       },

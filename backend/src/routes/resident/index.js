@@ -3,6 +3,7 @@ import qrcode from "qrcode";
 import nodemailer from "nodemailer";
 import prisma from "../../../lib/prisma.js";
 import { authMiddleware } from "../../middleware/auth.js";
+import { sendBulkPushNotifications } from "../../../lib/notifications.js";
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -107,7 +108,6 @@ router.get("/maintenance", async (req, res) => {
       },
       orderBy: { createdAt: "desc" },
     });
-    console.log(tickets);
 
     res.json(tickets);
   } catch (err) {
@@ -158,6 +158,22 @@ router.post("/maintenance", async (req, res) => {
         },
       },
     });
+
+    // Notify all admins in the community about the new maintenance request
+    const admins = await prisma.user.findMany({
+      where: {
+        communityId,
+        role: "ADMIN",
+        pushToken: { not: null },
+      },
+      select: { pushToken: true },
+    });
+    await sendBulkPushNotifications(
+      admins.map((a) => a.pushToken),
+      "🔧 New Maintenance Request",
+      `${ticket.title} — submitted by a resident`,
+      { type: "MAINTENANCE_REQUEST", ticketId: ticket.id },
+    );
 
     res.status(201).json(ticket);
   } catch (err) {
@@ -493,10 +509,23 @@ router.get("/facilities", async (req, res) => {
 });
 
 function toHM(date) {
-  // returns "HH:mm" in local time
+  // returns "HH:mm" in IST (Asia/Kolkata) — consistent regardless of server timezone
   const d = new Date(date);
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
+  const formatter = new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(d);
+  const hh = (parts.find((p) => p.type === "hour")?.value || "00").padStart(
+    2,
+    "0",
+  );
+  const mm = (parts.find((p) => p.type === "minute")?.value || "00").padStart(
+    2,
+    "0",
+  );
   return `${hh}:${mm}`;
 }
 
@@ -596,7 +625,12 @@ router.get("/user-bookings", async (req, res) => {
         startsAt: { gte: dayStart, lt: dayEnd },
       },
     });
-    res.json(bookings);
+    // Normalize status to lowercase to match the frontend expectation
+    const payload = bookings.map((b) => ({
+      ...b,
+      status: b.status === "CANCELLED" ? "cancelled" : "confirmed",
+    }));
+    res.json(payload);
   } catch (err) {
     console.error("Error fetching user bookings:", err);
     res.status(500).json({ error: "Failed to fetch user bookings" });
@@ -826,7 +860,6 @@ router.post("/bookings", async (req, res) => {
         user: { select: { name: true } },
       },
     });
-
 
     res.status(201).json({ ...created, status: "confirmed" });
   } catch (err) {

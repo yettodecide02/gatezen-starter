@@ -159,6 +159,16 @@ router.post("/", async (req, res) => {
       );
     }
 
+    // Push notification to resident on check-out
+    if (status?.toLowerCase() === "checked_out" && visitor.user?.pushToken) {
+      await sendPushNotification(
+        visitor.user.pushToken,
+        "👋 Visitor Departed",
+        `${visitor.name} has checked out`,
+        { type: "VISITOR_CHECKOUT", visitorId: visitor.id },
+      );
+    }
+
     // Send notification email for GUEST type visitors when checked out
     if (
       visitor.visitorType === "GUEST" &&

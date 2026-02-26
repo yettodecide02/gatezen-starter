@@ -25,7 +25,12 @@ app.use(express.json());
 app.use(limiter);
 
 app.use((req, res, next) => {
-  console.log(`From ${req.ip} - ${req.method} ${req.url}`);
+  const start = Date.now();
+  res.on("finish", () => {
+    console.log(
+      `[${new Date().toISOString()}] ${req.method} ${req.url} | ${res.statusCode} | ${Date.now() - start}ms | IP: ${req.ip}`,
+    );
+  });
   next();
 });
 
