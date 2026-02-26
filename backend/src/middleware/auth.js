@@ -1,7 +1,7 @@
 import jwt from "jsonwebtoken";
 import prisma from "../../lib/prisma.js";
 
-export const authMiddleware =  (req, res, next) => {
+export const authMiddleware = (req, res, next) => {
   const token = req.headers.authorization?.split(" ")[1];
   if (!token) {
     return res.status(401).json({ error: "Unauthorized" });
@@ -16,7 +16,7 @@ export const authMiddleware =  (req, res, next) => {
     const user = await prisma.user.findUnique({
       where: { id: req.user.userId },
     });
-    if(!user) {
+    if (!user) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     req.user = user;
@@ -26,10 +26,9 @@ export const authMiddleware =  (req, res, next) => {
 
 const requestCount = {};
 const limitTime = 600000; // 10 minutes
-const maxRequests = 10000;
+const maxRequests = 1000; // 1000 requests per 10 minutes per IP
 
 export const limiter = (req, res, next) => {
-  
   const ip = req.ip;
   const currentTime = Date.now();
 

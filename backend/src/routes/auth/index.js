@@ -14,7 +14,8 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-const otps = {};
+const otps = {}; // { email: { code: string, expiresAt: number } }
+const OTP_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
@@ -55,7 +56,7 @@ router.post("/login", async (req, res) => {
       select: { id: true, name: true },
     });
 
-    const jwttoken = jwt.sign({ userId: user.id }, process.env.JWT_SECRET);
+    const jwttoken = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, {});
 
     const data = {
       ...user,
@@ -127,7 +128,7 @@ router.post("/community-signup", async (req, res) => {
       },
     });
 
-    const jwttoken = jwt.sign({ userId: admin.id }, process.env.JWT_SECRET);
+    const jwttoken = jwt.sign({ userId: admin.id }, process.env.JWT_SECRET, {});
     return res.status(201).json({ user: admin, jwttoken });
   } catch (e) {
     console.error("Error during community signup:", e);
@@ -233,7 +234,7 @@ router.post("/signup", async (req, res) => {
       },
     });
 
-    const jwttoken = jwt.sign({ userId: user.id }, process.env.JWT_SECRET);
+    const jwttoken = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, {});
 
     // Push notification to all admins of the community
     const admins = await prisma.user.findMany({
@@ -293,6 +294,7 @@ router.get("/existing-user", async (req, res) => {
       const jwttoken = jwt.sign(
         { userId: existingUser.id },
         process.env.JWT_SECRET,
+        {},
       );
       const data = {
         ...existingUser,
@@ -315,7 +317,7 @@ router.post("/send-otp", async (req, res) => {
   }
 
   const userOtp = Math.floor(100000 + Math.random() * 900000).toString();
-  otps[email] = userOtp;
+  otps[email] = { code: userOtp, expiresAt: Date.now() + OTP_EXPIRY_MS };
   if (operation != "Sign-up") {
     try {
       const existingUser = await prisma.user.findUnique({
@@ -353,7 +355,19 @@ router.post("/send-otp", async (req, res) => {
 
 router.post("/check-otp", async (req, res) => {
   const { email, otp } = req.body;
-  if (otps[email] === otp) {
+  const record = otps[email];
+  if (!record) {
+    return res
+      .status(400)
+      .json({ message: "No OTP found. Please request a new code." });
+  }
+  if (Date.now() > record.expiresAt) {
+    delete otps[email];
+    return res
+      .status(400)
+      .json({ message: "OTP has expired. Please request a new code." });
+  }
+  if (record.code === otp) {
     delete otps[email];
     return res
       .status(200)
