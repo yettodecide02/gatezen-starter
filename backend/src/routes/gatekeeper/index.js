@@ -215,50 +215,58 @@ router.get("/stats", async (req, res) => {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // Get today's visitor counts by status (based on check-in/out times)
-    const [totalToday, checkedIn, checkedOut, pending] = await Promise.all([
-      prisma.visitor.count({
-        where: {
-          communityId: req.user.communityId,
-          visitDate: {
-            gte: today,
-            lt: tomorrow,
+    // Get today's visitor counts and package stats
+    const [totalToday, checkedIn, checkedOut, pending, packagesCollected] =
+      await Promise.all([
+        prisma.visitor.count({
+          where: {
+            communityId: req.user.communityId,
+            visitDate: {
+              gte: today,
+              lt: tomorrow,
+            },
           },
-        },
-      }),
-      prisma.visitor.count({
-        where: {
-          communityId: req.user.communityId,
-          visitDate: {
-            gte: today,
-            lt: tomorrow,
+        }),
+        prisma.visitor.count({
+          where: {
+            communityId: req.user.communityId,
+            visitDate: {
+              gte: today,
+              lt: tomorrow,
+            },
+            checkInAt: { not: null },
+            checkOutAt: null,
           },
-          checkInAt: { not: null },
-          checkOutAt: null,
-        },
-      }),
-      prisma.visitor.count({
-        where: {
-          communityId: req.user.communityId,
-          visitDate: {
-            gte: today,
-            lt: tomorrow,
+        }),
+        prisma.visitor.count({
+          where: {
+            communityId: req.user.communityId,
+            visitDate: {
+              gte: today,
+              lt: tomorrow,
+            },
+            checkOutAt: { not: null },
           },
-          checkOutAt: { not: null },
-        },
-      }),
-      prisma.visitor.count({
-        where: {
-          communityId: req.user.communityId,
-          visitDate: {
-            gte: today,
-            lt: tomorrow,
+        }),
+        prisma.visitor.count({
+          where: {
+            communityId: req.user.communityId,
+            visitDate: {
+              gte: today,
+              lt: tomorrow,
+            },
+            checkInAt: null,
+            checkOutAt: null,
           },
-          checkInAt: null,
-          checkOutAt: null,
-        },
-      }),
-    ]);
+        }),
+        prisma.packages.count({
+          where: {
+            communityId: req.user.communityId,
+            status: "PICKED",
+            createdAt: { gte: today, lt: tomorrow },
+          },
+        }),
+      ]);
 
     // Get visitor type breakdown for today
     const visitorTypeStats = await prisma.visitor.groupBy({
@@ -291,6 +299,7 @@ router.get("/stats", async (req, res) => {
         checkedIn,
         checkedOut,
         total: totalToday,
+        packagesCollected,
         typeBreakdown,
       },
     });
@@ -657,13 +666,13 @@ router.get("/packages", async (req, res) => {
     const result = await prisma.packages.findMany({
       where: {
         communityId: communityId,
-        status: "PENDING",
       },
       select: {
         id: true,
         name: true,
         status: true,
         image: true,
+        createdAt: true,
         user: {
           select: {
             id: true,
@@ -730,14 +739,39 @@ router.post("/packages", async (req, res) => {
 
 router.put("/packages/:id", async (req, res) => {
   const { id } = req.params;
-  const { status } = req.body;
+  const { status, userId, name, image } = req.body;
+
+  // Detail update (edit package info)
+  if (!status && (userId || name || image !== undefined)) {
+    try {
+      const updateData = {};
+      if (userId) updateData.userId = userId;
+      if (name) updateData.name = name;
+      if (image) updateData.image = image;
+
+      const updated = await prisma.packages.update({
+        where: { id },
+        data: updateData,
+      });
+      return res.status(200).json({ status: "success", data: updated });
+    } catch (e) {
+      console.error(e);
+      return res.status(400).json({ error: e.message });
+    }
+  }
 
   if (!status) return res.status(400).json({ error: "status is required" });
+
+  // Map frontend values to DB enum values
+  const STATUS_MAP = { pending: "PENDING", collected: "PICKED" };
+  const dbStatus = STATUS_MAP[status?.toLowerCase()];
+  if (!dbStatus)
+    return res.status(400).json({ error: `Invalid status: ${status}` });
 
   try {
     const updated = await prisma.packages.update({
       where: { id: id },
-      data: { status },
+      data: { status: dbStatus },
       select: {
         image: true,
         name: true,
@@ -750,23 +784,31 @@ router.put("/packages/:id", async (req, res) => {
       },
     });
 
-    const base64Data = updated.image.includes("base64,")
-      ? updated.image.split("base64,")[1]
-      : updated.image;
+    // Send email notification only when package is collected/picked
+    if (dbStatus === "PICKED") {
+      try {
+        const base64Data = updated.image.includes("base64,")
+          ? updated.image.split("base64,")[1]
+          : updated.image;
+        await transporter.sendMail({
+          from: process.env.EMAIL_ID,
+          to: updated.user.email,
+          subject: `Your ${updated.name} package has been picked up`,
+          text: `Your ${updated.name} package has been collected from the gate.`,
+          attachments: [
+            {
+              filename: "package.jpg",
+              content: base64Data,
+              encoding: "base64",
+            },
+          ],
+        });
+      } catch (emailErr) {
+        console.error("Failed to send package email:", emailErr);
+        // Non-fatal: DB update succeeded
+      }
+    }
 
-    await transporter.sendMail({
-      from: process.env.EMAIL_ID,
-      to: updated.user.email,
-      subject: `Your ${updated.name} package has been picked`,
-      text: `Your ${updated.name} package has been picked`,
-      attachments: [
-        {
-          filename: "package.jpg",
-          content: base64Data,
-          encoding: "base64",
-        },
-      ],
-    });
     res.status(200).json({ status: "success", data: updated });
   } catch (e) {
     console.error(e);

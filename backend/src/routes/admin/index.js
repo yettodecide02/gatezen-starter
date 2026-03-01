@@ -497,7 +497,27 @@ router.post("/maintenance/:id/comments", async (req, res) => {
 router.post("/maintenance/update", async (req, res) => {
   const { ticketId, status } = req.body;
 
+  const ALLOWED_TRANSITIONS = {
+    SUBMITTED: ["IN_PROGRESS"],
+    IN_PROGRESS: ["RESOLVED"],
+    RESOLVED: ["CLOSED"],
+    CLOSED: [],
+  };
+
   try {
+    const currentTicket = await prisma.ticket.findUnique({
+      where: { id: ticketId },
+      select: { status: true },
+    });
+    if (!currentTicket)
+      return res.status(404).json({ error: "Ticket not found" });
+    const allowed = ALLOWED_TRANSITIONS[currentTicket.status] || [];
+    if (!allowed.includes(status)) {
+      return res.status(400).json({
+        error: `Invalid transition: cannot move from ${currentTicket.status} to ${status}`,
+      });
+    }
+
     const updatedTicket = await prisma.ticket.update({
       where: { id: ticketId },
       data: { status },
@@ -1905,7 +1925,13 @@ router.get("/gatekeepers", async (req, res) => {
     }
     const gatekeepers = await prisma.user.findMany({
       where: { communityId, role: "GATEKEEPER" },
-      select: { id: true, name: true, email: true, status: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        status: true,
+        createdAt: true,
+      },
     });
     res.json(gatekeepers);
   } catch (err) {
