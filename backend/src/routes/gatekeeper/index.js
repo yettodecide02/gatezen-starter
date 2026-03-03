@@ -961,4 +961,96 @@ router.post("/kid-passes/:id", async (req, res) => {
   }
 });
 
+// ─── Vehicle Search ────────────────────────────────────────────
+router.get("/vehicle-search", async (req, res) => {
+  const { vehicleNo, communityId } = req.query;
+  if (!vehicleNo || !communityId) {
+    return res
+      .status(400)
+      .json({ error: "vehicleNo and communityId are required" });
+  }
+  const q = vehicleNo.trim().toUpperCase();
+  try {
+    // Search resident vehicles (vehicles is a String[] — filter in JS)
+    const users = await prisma.user.findMany({
+      where: {
+        communityId,
+        role: "RESIDENT",
+        status: "APPROVED",
+        vehicles: { isEmpty: false },
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        vehicles: true,
+        unit: {
+          select: {
+            number: true,
+            block: { select: { name: true } },
+          },
+        },
+      },
+    });
+
+    const residentResults = users.flatMap((u) =>
+      u.vehicles
+        .filter((v) => v.toUpperCase().includes(q))
+        .map((v) => ({
+          id: `${u.id}-${v}`,
+          vehicleNo: v,
+          vehicleType: null,
+          vehicleColor: null,
+          vehicleModel: null,
+          ownerType: "RESIDENT",
+          ownerName: u.name,
+          contact: u.phone || null,
+          email: u.email,
+          unitNumber: u.unit?.number || null,
+          blockName: u.unit?.block?.name || null,
+          registeredAt: null,
+        })),
+    );
+
+    // Search visitor vehicles
+    const visitors = await prisma.visitor.findMany({
+      where: {
+        communityId,
+        vehicleNo: { contains: q, mode: "insensitive" },
+      },
+      select: {
+        id: true,
+        name: true,
+        contact: true,
+        vehicleNo: true,
+        visitDate: true,
+      },
+      orderBy: { visitDate: "desc" },
+      take: 20,
+    });
+
+    const visitorResults = visitors.map((v) => ({
+      id: v.id,
+      vehicleNo: v.vehicleNo,
+      vehicleType: null,
+      vehicleColor: null,
+      vehicleModel: null,
+      ownerType: "VISITOR",
+      ownerName: v.name,
+      contact: v.contact,
+      email: null,
+      unitNumber: null,
+      blockName: null,
+      registeredAt: v.visitDate,
+    }));
+
+    const vehicles = [...residentResults, ...visitorResults];
+    res.json({ vehicles, count: vehicles.length });
+  } catch (error) {
+    console.error("Vehicle search error:", error);
+    res.status(500).json({ error: "Search failed" });
+  }
+});
+
 export default router;
