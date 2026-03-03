@@ -894,6 +894,8 @@ router.get("/profile", async (req, res) => {
         id: true,
         name: true,
         email: true,
+        phone: true,
+        vehicles: true,
         role: true,
         status: true,
         communityId: true,
@@ -947,23 +949,45 @@ router.get("/profile", async (req, res) => {
   }
 });
 
-// Update resident profile (name only)
+// Update resident profile
 router.patch("/profile", async (req, res) => {
   try {
     const userId = req.user.id;
-    const { name } = req.body;
+    const { name, phone, vehicles } = req.body;
 
     if (!name || typeof name !== "string" || !name.trim()) {
       return res.status(400).json({ error: "name is required" });
     }
 
+    // Validate vehicles if provided
+    if (vehicles !== undefined) {
+      if (!Array.isArray(vehicles)) {
+        return res.status(400).json({ error: "vehicles must be an array" });
+      }
+      if (vehicles.some((v) => typeof v !== "string" || !v.trim())) {
+        return res
+          .status(400)
+          .json({ error: "each vehicle number must be a non-empty string" });
+      }
+    }
+
+    const data = {
+      name: name.trim(),
+      phone: phone !== undefined ? phone?.trim() || null : undefined,
+      ...(vehicles !== undefined && {
+        vehicles: vehicles.map((v) => v.trim().toUpperCase()),
+      }),
+    };
+
     const updated = await prisma.user.update({
       where: { id: userId },
-      data: { name: name.trim() },
+      data,
       select: {
         id: true,
         name: true,
         email: true,
+        phone: true,
+        vehicles: true,
       },
     });
 
@@ -1282,6 +1306,56 @@ router.get("/neighbors", async (req, res) => {
   }
 });
 
+// ─── GET community directory (all residents) ────────────────
+router.get("/directory", async (req, res) => {
+  try {
+    const { communityId } = req.user;
+
+    const residents = await prisma.user.findMany({
+      where: {
+        communityId,
+        role: "RESIDENT",
+        status: "APPROVED",
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        unit: {
+          select: {
+            number: true,
+            block: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [
+        { unit: { block: { name: "asc" } } },
+        { unit: { number: "asc" } },
+        { name: "asc" },
+      ],
+    });
+
+    const data = residents.map((r) => ({
+      id: r.id,
+      name: r.name,
+      email: r.email,
+      unitNumber: r.unit?.number || "N/A",
+      blockName: r.unit?.block?.name || "N/A",
+    }));
+
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error("Error fetching directory:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch directory" });
+  }
+});
+
 router.get("/pdfs", async (req, res) => {
   try {
     const { communityId } = req.query;
@@ -1447,6 +1521,310 @@ router.post("/kid-passes", async (req, res) => {
   } catch (err) {
     console.error("Error creating kid pass:", err);
     res.status(500).json({ error: "Failed to create kid pass" });
+  }
+});
+
+router.get("/notice-board/", async (req, res) => {
+  try {
+    const { communityId } = req.user;
+
+    const notices = await prisma.notice.findMany({
+      where: { communityId },
+      orderBy: [{ isPinned: "desc" }, { createdAt: "desc" }],
+    });
+
+    res.json({ success: true, data: notices });
+  } catch (error) {
+    console.error("Error fetching notices:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch notices" });
+  }
+});
+
+router.get("/surveys/", async (req, res) => {
+  try {
+    const { communityId, id: userId } = req.user;
+
+    const surveys = await prisma.survey.findMany({
+      where: { communityId },
+      include: {
+        questions: true,
+        _count: { select: { responses: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    // For each survey, check if the current user has already responded
+    const userResponses = await prisma.surveyResponse.findMany({
+      where: {
+        userId,
+        surveyId: { in: surveys.map((s) => s.id) },
+      },
+      select: { surveyId: true },
+    });
+
+    const respondedSet = new Set(userResponses.map((r) => r.surveyId));
+
+    const data = surveys.map((survey) => ({
+      id: survey.id,
+      title: survey.title,
+      description: survey.description,
+      startDate: survey.startDate,
+      endDate: survey.endDate,
+      createdAt: survey.createdAt,
+      questionCount: survey.questions.length,
+      responseCount: survey._count.responses,
+      hasResponded: respondedSet.has(survey.id),
+      questions: survey.questions.map((q) => ({
+        id: q.id,
+        question: q.question,
+        type: q.type,
+        options: q.options,
+      })),
+    }));
+
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error("Error fetching surveys:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch surveys" });
+  }
+});
+
+router.post("/surveys/:id/respond", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { answers } = req.body;
+    const userId = req.user.id;
+
+    if (!answers) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Answers are required" });
+    }
+
+    // Verify survey exists and belongs to user's community
+    const survey = await prisma.survey.findFirst({
+      where: { id, communityId: req.user.communityId },
+    });
+
+    if (!survey) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Survey not found" });
+    }
+
+    // Check if survey is still open
+    if (new Date() > new Date(survey.endDate)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Survey has ended" });
+    }
+
+    // Check if user already responded
+    const existingResponse = await prisma.surveyResponse.findUnique({
+      where: { surveyId_userId: { surveyId: id, userId } },
+    });
+
+    if (existingResponse) {
+      return res.status(400).json({
+        success: false,
+        message: "You have already responded to this survey",
+      });
+    }
+
+    const response = await prisma.surveyResponse.create({
+      data: {
+        surveyId: id,
+        userId,
+        answers,
+      },
+    });
+
+    res.status(201).json({ success: true, data: response });
+  } catch (error) {
+    console.error("Error submitting survey response:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to submit response" });
+  }
+});
+
+router.get("/polls/", async (req, res) => {
+  try {
+    const { communityId, id: userId } = req.user;
+
+    const polls = await prisma.poll.findMany({
+      where: { communityId },
+      include: {
+        candidates: {
+          include: {
+            _count: { select: { votes: true } },
+          },
+        },
+        _count: { select: { votes: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    // Check which polls the user has voted in
+    const userVotes = await prisma.pollVote.findMany({
+      where: {
+        userId,
+        pollId: { in: polls.map((p) => p.id) },
+      },
+      select: { pollId: true, candidateId: true },
+    });
+
+    const voteMap = new Map(userVotes.map((v) => [v.pollId, v.candidateId]));
+
+    const data = polls.map((poll) => ({
+      id: poll.id,
+      title: poll.title,
+      description: poll.description,
+      startDate: poll.startDate,
+      endDate: poll.endDate,
+      createdAt: poll.createdAt,
+      totalVotes: poll._count.votes,
+      hasVoted: voteMap.has(poll.id),
+      userVotedFor: voteMap.get(poll.id) || null,
+      candidates: poll.candidates.map((c) => ({
+        id: c.id,
+        name: c.name,
+        description: c.description,
+        votes: c._count.votes,
+      })),
+    }));
+
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error("Error fetching polls:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch polls" });
+  }
+});
+
+// ─── GET single poll ────────────────────────────────────────
+router.get("/polls/:id", async (req, res) => {
+  try {
+    const { communityId, id: userId } = req.user;
+    const { id } = req.params;
+
+    const poll = await prisma.poll.findFirst({
+      where: { id, communityId },
+      include: {
+        candidates: {
+          include: {
+            _count: { select: { votes: true } },
+          },
+        },
+        _count: { select: { votes: true } },
+      },
+    });
+
+    if (!poll) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Poll not found" });
+    }
+
+    const userVote = await prisma.pollVote.findUnique({
+      where: { pollId_userId: { pollId: id, userId } },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        ...poll,
+        totalVotes: poll._count.votes,
+        hasVoted: !!userVote,
+        userVotedFor: userVote?.candidateId || null,
+        candidates: poll.candidates.map((c) => ({
+          id: c.id,
+          name: c.name,
+          description: c.description,
+          votes: c._count.votes,
+        })),
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching poll:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch poll" });
+  }
+});
+
+router.post("/polls/:id/vote", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { candidateId } = req.body;
+    const userId = req.user.id;
+
+    if (!candidateId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "candidateId is required" });
+    }
+
+    // Verify poll exists and belongs to user's community
+    const poll = await prisma.poll.findFirst({
+      where: { id, communityId: req.user.communityId },
+    });
+
+    if (!poll) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Poll not found" });
+    }
+
+    // Check if poll is still open
+    if (new Date() > new Date(poll.endDate)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Poll has ended" });
+    }
+
+    if (new Date() < new Date(poll.startDate)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Poll has not started yet" });
+    }
+
+    // Check if user already voted
+    const existingVote = await prisma.pollVote.findUnique({
+      where: { pollId_userId: { pollId: id, userId } },
+    });
+
+    if (existingVote) {
+      return res.status(400).json({
+        success: false,
+        message: "You have already voted in this poll",
+      });
+    }
+
+    // Verify candidate belongs to this poll
+    const candidate = await prisma.pollCandidate.findFirst({
+      where: { id: candidateId, pollId: id },
+    });
+
+    if (!candidate) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid candidate for this poll" });
+    }
+
+    const vote = await prisma.pollVote.create({
+      data: {
+        pollId: id,
+        candidateId,
+        userId,
+      },
+    });
+
+    res.status(201).json({ success: true, data: vote });
+  } catch (error) {
+    console.error("Error casting vote:", error);
+    res.status(500).json({ success: false, message: "Failed to cast vote" });
   }
 });
 

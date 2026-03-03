@@ -18,6 +18,7 @@ model Community {
   name             String                  @unique
   description      String?
   address          String?
+  overstayLimits   Json?
   createdAt        DateTime                @default(now())
   updatedAt        DateTime                @updatedAt
   noOfBlocks       Int?
@@ -35,6 +36,9 @@ model Community {
   payments         Payment[]
   packages         Packages[]
   pdfs             Pdfs[]
+  notices          Notice[]
+  surveys          Survey[]
+  polls            Poll[]
 }
 
 model Block {
@@ -75,6 +79,8 @@ model User {
   status      UserStatus @default(PENDING)
   communityId String
   unitId      String?
+  phone       String?
+  vehicles    String[]
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
   pushToken   String?
@@ -82,11 +88,13 @@ model User {
   comments    Comment[]
   tickets     Ticket[]
   payments    Payment[]
-  community   Community  @relation(fields: [communityId], references: [id], onDelete: Cascade)
-  unit        Unit?      @relation(fields: [unitId], references: [id], onDelete: SetNull)
-  visitors    Visitor[]  @relation("UserVisitors")
-  kidPasses   KidPass[]  @relation("UserKidPasses")
-  packages    Packages[]
+  community       Community        @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  unit            Unit?            @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  visitors        Visitor[]        @relation("UserVisitors")
+  kidPasses       KidPass[]        @relation("UserKidPasses")
+  packages        Packages[]
+  surveyResponses SurveyResponse[]
+  pollVotes       PollVote[]
 
   @@index([communityId])
   @@index([communityId, role])
@@ -390,4 +398,116 @@ enum KidPassStatus {
   REJECTED
   CHECKED_IN
   CHECKED_OUT
+}
+
+// ─── Notice Board ───────────────────────────────────────────
+
+model Notice {
+  id          String   @id @default(uuid())
+  title       String
+  content     String
+  category    String   @default("General")
+  isPinned    Boolean  @default(false)
+  communityId String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([communityId])
+  @@index([communityId, isPinned])
+}
+
+// ─── Surveys ────────────────────────────────────────────────
+
+enum SurveyQuestionType {
+  MULTIPLE_CHOICE
+  YES_NO
+  RATING
+  TEXT
+}
+
+model Survey {
+  id          String           @id @default(uuid())
+  title       String
+  description String?
+  startDate   DateTime         @default(now())
+  endDate     DateTime
+  communityId String
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  community   Community        @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  questions   SurveyQuestion[]
+  responses   SurveyResponse[]
+
+  @@index([communityId])
+}
+
+model SurveyQuestion {
+  id       String             @id @default(uuid())
+  question String
+  type     SurveyQuestionType
+  options  Json?
+  surveyId String
+  survey   Survey             @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+
+  @@index([surveyId])
+}
+
+model SurveyResponse {
+  id        String   @id @default(uuid())
+  surveyId  String
+  userId    String
+  answers   Json
+  createdAt DateTime @default(now())
+  survey    Survey   @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([surveyId, userId])
+  @@index([surveyId])
+  @@index([userId])
+}
+
+// ─── Election / Polls ───────────────────────────────────────
+
+model Poll {
+  id          String          @id @default(uuid())
+  title       String
+  description String?
+  startDate   DateTime        @default(now())
+  endDate     DateTime
+  communityId String
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  community   Community       @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  candidates  PollCandidate[]
+  votes       PollVote[]
+
+  @@index([communityId])
+}
+
+model PollCandidate {
+  id          String     @id @default(uuid())
+  name        String
+  description String?
+  pollId      String
+  poll        Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  votes       PollVote[]
+
+  @@index([pollId])
+}
+
+model PollVote {
+  id          String        @id @default(uuid())
+  pollId      String
+  candidateId String
+  userId      String
+  createdAt   DateTime      @default(now())
+  poll        Poll          @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  candidate   PollCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([pollId, userId])
+  @@index([pollId])
+  @@index([candidateId])
+  @@index([userId])
 }
