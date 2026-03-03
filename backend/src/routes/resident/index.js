@@ -1321,6 +1321,7 @@ router.get("/directory", async (req, res) => {
         id: true,
         name: true,
         email: true,
+        phone: true,
         unit: {
           select: {
             number: true,
@@ -1345,6 +1346,7 @@ router.get("/directory", async (req, res) => {
       email: r.email,
       unitNumber: r.unit?.number || "N/A",
       blockName: r.unit?.block?.name || "N/A",
+      phone: r.phone || null,
     }));
 
     res.json({ success: true, data });
@@ -1829,3 +1831,5 @@ router.post("/polls/:id/vote", async (req, res) => {
 });
 
 export default router;
+
+
