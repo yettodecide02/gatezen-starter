@@ -5,6 +5,7 @@ import jwt from "jsonwebtoken";
 import multer from "multer";
 import { UserStatus, FacilityType, PriceType } from "@prisma/client";
 import { authMiddleware } from "../../middleware/auth.js";
+import { checkFeature } from "../../middleware/checkFeature.js";
 import {
   sendPushNotification,
   sendBulkPushNotifications,
@@ -415,7 +416,7 @@ router.get("/residents", async (req, res) => {
 });
 
 // Bookings management
-router.get("/bookings", async (req, res) => {
+router.get("/bookings", checkFeature("AMENITY_BOOKING"), async (req, res) => {
   try {
     const { communityId } = req.query;
     const community = await prisma.community.findUnique({
@@ -445,7 +446,7 @@ router.get("/bookings", async (req, res) => {
 });
 
 // Maintenance management
-router.get("/maintenance", async (req, res) => {
+router.get("/maintenance", checkFeature("HELPDESK"), async (req, res) => {
   try {
     const { communityId } = req.query;
     const community = await prisma.community.findUnique({
@@ -473,168 +474,191 @@ router.get("/maintenance", async (req, res) => {
   }
 });
 
-router.post("/maintenance/:id/comments", async (req, res) => {
-  const { id } = req.params;
-  const { text } = req.body;
-  const userId = req.user.id;
+router.post(
+  "/maintenance/:id/comments",
+  checkFeature("HELPDESK"),
+  async (req, res) => {
+    const { id } = req.params;
+    const { text } = req.body;
+    const userId = req.user.id;
 
-  if (!text?.trim()) {
-    return res.status(400).json({ error: "Comment text is required" });
-  }
+    if (!text?.trim()) {
+      return res.status(400).json({ error: "Comment text is required" });
+    }
 
-  try {
-    const comment = await prisma.comment.create({
-      data: { text: text.trim(), userId, ticketId: id },
-      include: { user: { select: { name: true, role: true } } },
-    });
-    res.status(201).json({ comment });
-  } catch (e) {
-    console.error("Error adding comment:", e);
-    res.status(500).json({ error: "Failed to add comment" });
-  }
-});
-
-router.post("/maintenance/update", async (req, res) => {
-  const { ticketId, status } = req.body;
-
-  const ALLOWED_TRANSITIONS = {
-    SUBMITTED: ["IN_PROGRESS"],
-    IN_PROGRESS: ["RESOLVED"],
-    RESOLVED: ["CLOSED"],
-    CLOSED: [],
-  };
-
-  try {
-    const currentTicket = await prisma.ticket.findUnique({
-      where: { id: ticketId },
-      select: { status: true },
-    });
-    if (!currentTicket)
-      return res.status(404).json({ error: "Ticket not found" });
-    const allowed = ALLOWED_TRANSITIONS[currentTicket.status] || [];
-    if (!allowed.includes(status)) {
-      return res.status(400).json({
-        error: `Invalid transition: cannot move from ${currentTicket.status} to ${status}`,
+    try {
+      const comment = await prisma.comment.create({
+        data: { text: text.trim(), userId, ticketId: id },
+        include: { user: { select: { name: true, role: true } } },
       });
+      res.status(201).json({ comment });
+    } catch (e) {
+      console.error("Error adding comment:", e);
+      res.status(500).json({ error: "Failed to add comment" });
     }
+  },
+);
 
-    const updatedTicket = await prisma.ticket.update({
-      where: { id: ticketId },
-      data: { status },
-      include: {
-        user: { select: { name: true, email: true, pushToken: true } },
-      },
-    });
+router.post(
+  "/maintenance/update",
+  checkFeature("HELPDESK"),
+  async (req, res) => {
+    const { ticketId, status } = req.body;
 
-    // Push notification to the ticket owner
-    if (updatedTicket.user?.pushToken) {
-      await sendPushNotification(
-        updatedTicket.user.pushToken,
-        "🔧 Maintenance Update",
-        `Your ticket "${updatedTicket.title}" status changed to ${updatedTicket.status.replace("_", " ")}`,
-        { type: "TICKET_UPDATE", ticketId: updatedTicket.id },
-      );
+    const ALLOWED_TRANSITIONS = {
+      SUBMITTED: ["IN_PROGRESS"],
+      IN_PROGRESS: ["RESOLVED"],
+      RESOLVED: ["CLOSED"],
+      CLOSED: [],
+    };
+
+    try {
+      const currentTicket = await prisma.ticket.findUnique({
+        where: { id: ticketId },
+        select: { status: true },
+      });
+      if (!currentTicket)
+        return res.status(404).json({ error: "Ticket not found" });
+      const allowed = ALLOWED_TRANSITIONS[currentTicket.status] || [];
+      if (!allowed.includes(status)) {
+        return res.status(400).json({
+          error: `Invalid transition: cannot move from ${currentTicket.status} to ${status}`,
+        });
+      }
+
+      const updatedTicket = await prisma.ticket.update({
+        where: { id: ticketId },
+        data: { status },
+        include: {
+          user: { select: { name: true, email: true, pushToken: true } },
+        },
+      });
+
+      // Push notification to the ticket owner
+      if (updatedTicket.user?.pushToken) {
+        await sendPushNotification(
+          updatedTicket.user.pushToken,
+          "🔧 Maintenance Update",
+          `Your ticket "${updatedTicket.title}" status changed to ${updatedTicket.status.replace("_", " ")}`,
+          { type: "TICKET_UPDATE", ticketId: updatedTicket.id },
+        );
+      }
+
+      res
+        .status(200)
+        .json({
+          message: "Maintenance request updated",
+          ticket: updatedTicket,
+        });
+    } catch (e) {
+      console.error("Error updating maintenance request:", e);
+      res.status(500).json({ error: "Internal server error" });
     }
-
-    res
-      .status(200)
-      .json({ message: "Maintenance request updated", ticket: updatedTicket });
-  } catch (e) {
-    console.error("Error updating maintenance request:", e);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
+  },
+);
 
 // Announcements management
-router.get("/announcements", async (req, res) => {
-  try {
-    const { communityId } = req.query;
-    const community = await prisma.community.findUnique({
-      where: { id: communityId },
-    });
-    if (!community) {
-      return res.status(404).json({ error: "No community found" });
+router.get(
+  "/announcements",
+  checkFeature("COMMUNICATION"),
+  async (req, res) => {
+    try {
+      const { communityId } = req.query;
+      const community = await prisma.community.findUnique({
+        where: { id: communityId },
+      });
+      if (!community) {
+        return res.status(404).json({ error: "No community found" });
+      }
+
+      const announcements = await prisma.announcement.findMany({
+        where: { communityId: community.id },
+        orderBy: { createdAt: "desc" },
+      });
+      res.status(200).json({ announcements });
+    } catch (e) {
+      console.error("Error fetching announcements:", e);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+router.post(
+  "/create-announcement",
+  checkFeature("COMMUNICATION"),
+  async (req, res) => {
+    const { title, content, communityId } = req.body;
+    const { userId } = req.user;
+
+    // Validate required fields
+    if (!title || !content) {
+      return res.status(400).json({ error: "Title and content are required" });
     }
 
-    const announcements = await prisma.announcement.findMany({
-      where: { communityId: community.id },
-      orderBy: { createdAt: "desc" },
-    });
-    res.status(200).json({ announcements });
-  } catch (e) {
-    console.error("Error fetching announcements:", e);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-router.post("/create-announcement", async (req, res) => {
-  const { title, content, communityId } = req.body;
-  const { userId } = req.user;
-
-  // Validate required fields
-  if (!title || !content) {
-    return res.status(400).json({ error: "Title and content are required" });
-  }
-
-  if (!communityId) {
-    return res.status(400).json({ error: "Community ID is required" });
-  }
-
-  try {
-    const community = await prisma.community.findUnique({
-      where: { id: communityId },
-    });
-    if (!community) {
-      return res.status(404).json({ error: "No community found" });
+    if (!communityId) {
+      return res.status(400).json({ error: "Community ID is required" });
     }
 
-    const announcement = await prisma.announcement.create({
-      data: {
+    try {
+      const community = await prisma.community.findUnique({
+        where: { id: communityId },
+      });
+      if (!community) {
+        return res.status(404).json({ error: "No community found" });
+      }
+
+      const announcement = await prisma.announcement.create({
+        data: {
+          title,
+          content,
+          communityId: community.id,
+        },
+        select: { id: true, title: true, content: true, createdAt: true },
+      });
+
+      // Push notification to all approved residents in the community (exclude admins)
+      const residents = await prisma.user.findMany({
+        where: {
+          communityId: community.id,
+          role: "RESIDENT",
+          status: "APPROVED",
+          pushToken: { not: null },
+        },
+        select: { pushToken: true },
+      });
+      await sendBulkPushNotifications(
+        residents.map((r) => r.pushToken),
+        "📢 New Announcement",
         title,
-        content,
-        communityId: community.id,
-      },
-      select: { id: true, title: true, content: true, createdAt: true },
-    });
+        { type: "ANNOUNCEMENT", announcementId: announcement.id },
+      );
 
-    // Push notification to all approved residents in the community (exclude admins)
-    const residents = await prisma.user.findMany({
-      where: {
-        communityId: community.id,
-        role: "RESIDENT",
-        status: "APPROVED",
-        pushToken: { not: null },
-      },
-      select: { pushToken: true },
-    });
-    await sendBulkPushNotifications(
-      residents.map((r) => r.pushToken),
-      "📢 New Announcement",
-      title,
-      { type: "ANNOUNCEMENT", announcementId: announcement.id },
-    );
+      res.status(201).json({ message: "Announcement created", announcement });
+    } catch (e) {
+      console.error("Error creating announcement:", e);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
 
-    res.status(201).json({ message: "Announcement created", announcement });
-  } catch (e) {
-    console.error("Error creating announcement:", e);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
+router.delete(
+  "/announcements/:id",
+  checkFeature("COMMUNICATION"),
+  async (req, res) => {
+    const { id } = req.params;
 
-router.delete("/announcements/:id", async (req, res) => {
-  const { id } = req.params;
+    try {
+      await prisma.announcement.delete({
+        where: { id: id },
+      });
 
-  try {
-    await prisma.announcement.delete({
-      where: { id: id },
-    });
-
-    res.status(200).json({ message: "Announcement deleted successfully" });
-  } catch (e) {
-    console.error("Error deleting announcement:", e);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
+      res.status(200).json({ message: "Announcement deleted successfully" });
+    } catch (e) {
+      console.error("Error deleting announcement:", e);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
 
 // === BLOCK MANAGEMENT ROUTES ===
 
@@ -1912,16 +1936,20 @@ router.get("/community/facility-types", async (req, res) => {
   }
 });
 
-router.delete("/bookings/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    await prisma.booking.delete({ where: { id } });
-    res.json({ message: "Booking deleted" });
-  } catch (err) {
-    console.error("Error deleting booking:", err);
-    res.status(500).json({ error: "Failed to delete booking" });
-  }
-});
+router.delete(
+  "/bookings/:id",
+  checkFeature("AMENITY_BOOKING"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      await prisma.booking.delete({ where: { id } });
+      res.json({ message: "Booking deleted" });
+    } catch (err) {
+      console.error("Error deleting booking:", err);
+      res.status(500).json({ error: "Failed to delete booking" });
+    }
+  },
+);
 
 router.get("/gatekeepers", async (req, res) => {
   try {
@@ -2019,7 +2047,7 @@ router.delete("/gatekeepers/:id", async (req, res) => {
   }
 });
 
-router.get("/visitor", async (req, res) => {
+router.get("/visitor", checkFeature("VISITOR_MANAGEMENT"), async (req, res) => {
   const { communityId, from, to } = req.query;
 
   if (!communityId || !from || !to) {
@@ -2076,34 +2104,39 @@ router.get("/visitor", async (req, res) => {
   }
 });
 
-router.post("/pdf", upload.single("file"), async (req, res) => {
-  try {
-    const { file } = req;
-    const { communityId, name } = req.body;
+router.post(
+  "/pdf",
+  upload.single("file"),
+  checkFeature("DOCUMENTS_UPLOADING"),
+  async (req, res) => {
+    try {
+      const { file } = req;
+      const { communityId, name } = req.body;
 
-    if (!communityId)
-      return res.status(400).json({ error: "CommunityId required" });
+      if (!communityId)
+        return res.status(400).json({ error: "CommunityId required" });
 
-    if (!file) return res.status(400).json({ error: "PDF file is required" });
+      if (!file) return res.status(400).json({ error: "PDF file is required" });
 
-    const pdfBytes = file.buffer;
+      const pdfBytes = file.buffer;
 
-    const result = await prisma.pdfs.create({
-      data: {
-        name: name || file.originalname,
-        content: pdfBytes,
-        communityId: communityId,
-      },
-    });
+      const result = await prisma.pdfs.create({
+        data: {
+          name: name || file.originalname,
+          content: pdfBytes,
+          communityId: communityId,
+        },
+      });
 
-    res.status(200).json({ message: "PDF uploaded successfully", result });
-  } catch (e) {
-    console.error("Error uploading PDF:", e);
-    res.status(500).json({ error: "Server error" });
-  }
-});
+      res.status(200).json({ message: "PDF uploaded successfully", result });
+    } catch (e) {
+      console.error("Error uploading PDF:", e);
+      res.status(500).json({ error: "Server error" });
+    }
+  },
+);
 
-router.get("/pdfs", async (req, res) => {
+router.get("/pdfs", checkFeature("DOCUMENTS_UPLOADING"), async (req, res) => {
   try {
     const { communityId } = req.query;
 
@@ -2126,174 +2159,197 @@ router.get("/pdfs", async (req, res) => {
   }
 });
 
-router.get("/pdf/:id", async (req, res) => {
-  const { id } = req.params;
-  try {
-    const pdf = await prisma.pdfs.findUnique({ where: { id } });
-
-    if (!pdf) return res.status(404).send("PDF not found");
-
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `inline; filename="${pdf.name}.pdf"`);
-
-    res.end(pdf.content); // IMPORTANT!!!
-  } catch (e) {
-    console.error("Error fetching PDFs:", e);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-router.delete("/pdf/:id", async (req, res) => {
-  try {
+router.get(
+  "/pdf/:id",
+  checkFeature("DOCUMENTS_UPLOADING"),
+  async (req, res) => {
     const { id } = req.params;
+    try {
+      const pdf = await prisma.pdfs.findUnique({ where: { id } });
 
-    if (!id) {
-      return res.status(400).json({ error: "PDF ID required" });
+      if (!pdf) return res.status(404).send("PDF not found");
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `inline; filename="${pdf.name}.pdf"`,
+      );
+
+      res.end(pdf.content); // IMPORTANT!!!
+    } catch (e) {
+      console.error("Error fetching PDFs:", e);
+      res.status(500).json({ error: "Server error" });
     }
+  },
+);
 
-    const existingPdf = await prisma.pdfs.findUnique({
-      where: { id },
-    });
+router.delete(
+  "/pdf/:id",
+  checkFeature("DOCUMENTS_UPLOADING"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
 
-    if (!existingPdf) {
-      return res.status(404).json({ error: "PDF not found" });
-    }
+      if (!id) {
+        return res.status(400).json({ error: "PDF ID required" });
+      }
 
-    await prisma.pdfs.delete({
-      where: { id },
-    });
-
-    res.status(200).json({ message: "PDF deleted successfully" });
-  } catch (e) {
-    console.error("Error deleting PDF:", e);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-router.post("/notice-board/", async (req, res) => {
-  try {
-    if (req.user.role !== "ADMIN") {
-      return res.status(403).json({ success: false, message: "Forbidden" });
-    }
-
-    const { title, content, category, isPinned } = req.body;
-
-    if (!title || !content) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Title and content are required" });
-    }
-
-    const notice = await prisma.notice.create({
-      data: {
-        title: title.trim(),
-        content: content.trim(),
-        category: category?.trim() || "General",
-        isPinned: isPinned || false,
-        communityId: req.user.communityId,
-      },
-    });
-
-    // Send push notification to all community residents
-    const residents = await prisma.user.findMany({
-      where: {
-        communityId: req.user.communityId,
-        role: "RESIDENT",
-        status: "APPROVED",
-        pushToken: { not: null },
-      },
-      select: { pushToken: true },
-    });
-
-    if (residents.length > 0) {
-      const tokens = residents.map((r) => r.pushToken);
-      await sendBulkPushNotifications(tokens, "New Notice", `${title}`, {
-        type: "notice",
-        noticeId: notice.id,
+      const existingPdf = await prisma.pdfs.findUnique({
+        where: { id },
       });
-    }
 
-    res.status(201).json({ success: true, data: notice });
-  } catch (error) {
-    console.error("Error creating notice:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to create notice" });
-  }
-});
+      if (!existingPdf) {
+        return res.status(404).json({ error: "PDF not found" });
+      }
+
+      await prisma.pdfs.delete({
+        where: { id },
+      });
+
+      res.status(200).json({ message: "PDF deleted successfully" });
+    } catch (e) {
+      console.error("Error deleting PDF:", e);
+      res.status(500).json({ error: "Server error" });
+    }
+  },
+);
+
+router.post(
+  "/notice-board/",
+  checkFeature("NOTICE_BOARD"),
+  async (req, res) => {
+    try {
+      if (req.user.role !== "ADMIN") {
+        return res.status(403).json({ success: false, message: "Forbidden" });
+      }
+
+      const { title, content, category, isPinned } = req.body;
+
+      if (!title || !content) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Title and content are required" });
+      }
+
+      const notice = await prisma.notice.create({
+        data: {
+          title: title.trim(),
+          content: content.trim(),
+          category: category?.trim() || "General",
+          isPinned: isPinned || false,
+          communityId: req.user.communityId,
+        },
+      });
+
+      // Send push notification to all community residents
+      const residents = await prisma.user.findMany({
+        where: {
+          communityId: req.user.communityId,
+          role: "RESIDENT",
+          status: "APPROVED",
+          pushToken: { not: null },
+        },
+        select: { pushToken: true },
+      });
+
+      if (residents.length > 0) {
+        const tokens = residents.map((r) => r.pushToken);
+        await sendBulkPushNotifications(tokens, "New Notice", `${title}`, {
+          type: "notice",
+          noticeId: notice.id,
+        });
+      }
+
+      res.status(201).json({ success: true, data: notice });
+    } catch (error) {
+      console.error("Error creating notice:", error);
+      res
+        .status(500)
+        .json({ success: false, message: "Failed to create notice" });
+    }
+  },
+);
 
 // ─── PUT update a notice (ADMIN only) ───────────────────────
-router.put("/notice-board/:id", async (req, res) => {
-  try {
-    if (req.user.role !== "ADMIN") {
-      return res.status(403).json({ success: false, message: "Forbidden" });
+router.put(
+  "/notice-board/:id",
+  checkFeature("NOTICE_BOARD"),
+  async (req, res) => {
+    try {
+      if (req.user.role !== "ADMIN") {
+        return res.status(403).json({ success: false, message: "Forbidden" });
+      }
+
+      const { id } = req.params;
+      const { title, content, category, isPinned } = req.body;
+
+      const existing = await prisma.notice.findFirst({
+        where: { id, communityId: req.user.communityId },
+      });
+
+      if (!existing) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Notice not found" });
+      }
+
+      const notice = await prisma.notice.update({
+        where: { id },
+        data: {
+          ...(title && { title: title.trim() }),
+          ...(content && { content: content.trim() }),
+          ...(category !== undefined && {
+            category: category?.trim() || "General",
+          }),
+          ...(isPinned !== undefined && { isPinned }),
+        },
+      });
+
+      res.json({ success: true, data: notice });
+    } catch (error) {
+      console.error("Error updating notice:", error);
+      res
+        .status(500)
+        .json({ success: false, message: "Failed to update notice" });
     }
-
-    const { id } = req.params;
-    const { title, content, category, isPinned } = req.body;
-
-    const existing = await prisma.notice.findFirst({
-      where: { id, communityId: req.user.communityId },
-    });
-
-    if (!existing) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Notice not found" });
-    }
-
-    const notice = await prisma.notice.update({
-      where: { id },
-      data: {
-        ...(title && { title: title.trim() }),
-        ...(content && { content: content.trim() }),
-        ...(category !== undefined && {
-          category: category?.trim() || "General",
-        }),
-        ...(isPinned !== undefined && { isPinned }),
-      },
-    });
-
-    res.json({ success: true, data: notice });
-  } catch (error) {
-    console.error("Error updating notice:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to update notice" });
-  }
-});
+  },
+);
 
 // ─── DELETE a notice (ADMIN only) ───────────────────────────
-router.delete("/notice-board/:id", async (req, res) => {
-  try {
-    if (req.user.role !== "ADMIN") {
-      return res.status(403).json({ success: false, message: "Forbidden" });
+router.delete(
+  "/notice-board/:id",
+  checkFeature("NOTICE_BOARD"),
+  async (req, res) => {
+    try {
+      if (req.user.role !== "ADMIN") {
+        return res.status(403).json({ success: false, message: "Forbidden" });
+      }
+
+      const { id } = req.params;
+
+      const existing = await prisma.notice.findFirst({
+        where: { id, communityId: req.user.communityId },
+      });
+
+      if (!existing) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Notice not found" });
+      }
+
+      await prisma.notice.delete({ where: { id } });
+
+      res.json({ success: true, message: "Notice deleted" });
+    } catch (error) {
+      console.error("Error deleting notice:", error);
+      res
+        .status(500)
+        .json({ success: false, message: "Failed to delete notice" });
     }
+  },
+);
 
-    const { id } = req.params;
-
-    const existing = await prisma.notice.findFirst({
-      where: { id, communityId: req.user.communityId },
-    });
-
-    if (!existing) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Notice not found" });
-    }
-
-    await prisma.notice.delete({ where: { id } });
-
-    res.json({ success: true, message: "Notice deleted" });
-  } catch (error) {
-    console.error("Error deleting notice:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to delete notice" });
-  }
-});
-
-router.get("/surveys/:id", async (req, res) => {
+router.get("/surveys/:id", checkFeature("SURVEYS"), async (req, res) => {
   try {
     const { communityId, id: userId } = req.user;
     const { id } = req.params;
@@ -2339,7 +2395,7 @@ router.get("/surveys/:id", async (req, res) => {
 });
 
 // ─── POST create a new survey (ADMIN only) ──────────────────
-router.post("/surveys/", async (req, res) => {
+router.post("/surveys/", checkFeature("SURVEYS"), async (req, res) => {
   try {
     if (req.user.role !== "ADMIN") {
       return res.status(403).json({ success: false, message: "Forbidden" });
@@ -2405,7 +2461,7 @@ router.post("/surveys/", async (req, res) => {
 // ─── POST respond to a survey ───────────────────────────────
 
 // ─── DELETE a survey (ADMIN only) ───────────────────────────
-router.delete("/surveys/:id", async (req, res) => {
+router.delete("/surveys/:id", checkFeature("SURVEYS"), async (req, res) => {
   try {
     if (req.user.role !== "ADMIN") {
       return res.status(403).json({ success: false, message: "Forbidden" });
@@ -2434,7 +2490,7 @@ router.delete("/surveys/:id", async (req, res) => {
   }
 });
 
-router.post("/polls/", async (req, res) => {
+router.post("/polls/", checkFeature("ELECTION_POLLS"), async (req, res) => {
   try {
     if (req.user.role !== "ADMIN") {
       return res.status(403).json({ success: false, message: "Forbidden" });
@@ -2497,34 +2553,40 @@ router.post("/polls/", async (req, res) => {
 // ─── POST vote in a poll ────────────────────────────────────
 
 // ─── DELETE a poll (ADMIN only) ─────────────────────────────
-router.delete("/polls/:id", async (req, res) => {
-  try {
-    if (req.user.role !== "ADMIN") {
-      return res.status(403).json({ success: false, message: "Forbidden" });
+router.delete(
+  "/polls/:id",
+  checkFeature("ELECTION_POLLS"),
+  async (req, res) => {
+    try {
+      if (req.user.role !== "ADMIN") {
+        return res.status(403).json({ success: false, message: "Forbidden" });
+      }
+
+      const { id } = req.params;
+
+      const existing = await prisma.poll.findFirst({
+        where: { id, communityId: req.user.communityId },
+      });
+
+      if (!existing) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Poll not found" });
+      }
+
+      await prisma.poll.delete({ where: { id } });
+
+      res.json({ success: true, message: "Poll deleted" });
+    } catch (error) {
+      console.error("Error deleting poll:", error);
+      res
+        .status(500)
+        .json({ success: false, message: "Failed to delete poll" });
     }
+  },
+);
 
-    const { id } = req.params;
-
-    const existing = await prisma.poll.findFirst({
-      where: { id, communityId: req.user.communityId },
-    });
-
-    if (!existing) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Poll not found" });
-    }
-
-    await prisma.poll.delete({ where: { id } });
-
-    res.json({ success: true, message: "Poll deleted" });
-  } catch (error) {
-    console.error("Error deleting poll:", error);
-    res.status(500).json({ success: false, message: "Failed to delete poll" });
-  }
-});
-
-router.get("/notice-board/", async (req, res) => {
+router.get("/notice-board/", checkFeature("NOTICE_BOARD"), async (req, res) => {
   try {
     const { communityId } = req.user;
 
@@ -2542,7 +2604,7 @@ router.get("/notice-board/", async (req, res) => {
   }
 });
 
-router.get("/surveys/", async (req, res) => {
+router.get("/surveys/", checkFeature("SURVEYS"), async (req, res) => {
   try {
     const { communityId, id: userId } = req.user;
 
@@ -2593,66 +2655,70 @@ router.get("/surveys/", async (req, res) => {
   }
 });
 
-router.post("/surveys/:id/respond", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { answers } = req.body;
-    const userId = req.user.id;
+router.post(
+  "/surveys/:id/respond",
+  checkFeature("SURVEYS"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { answers } = req.body;
+      const userId = req.user.id;
 
-    if (!answers) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Answers are required" });
-    }
+      if (!answers) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Answers are required" });
+      }
 
-    // Verify survey exists and belongs to user's community
-    const survey = await prisma.survey.findFirst({
-      where: { id, communityId: req.user.communityId },
-    });
-
-    if (!survey) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Survey not found" });
-    }
-
-    // Check if survey is still open
-    if (new Date() > new Date(survey.endDate)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Survey has ended" });
-    }
-
-    // Check if user already responded
-    const existingResponse = await prisma.surveyResponse.findUnique({
-      where: { surveyId_userId: { surveyId: id, userId } },
-    });
-
-    if (existingResponse) {
-      return res.status(400).json({
-        success: false,
-        message: "You have already responded to this survey",
+      // Verify survey exists and belongs to user's community
+      const survey = await prisma.survey.findFirst({
+        where: { id, communityId: req.user.communityId },
       });
+
+      if (!survey) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Survey not found" });
+      }
+
+      // Check if survey is still open
+      if (new Date() > new Date(survey.endDate)) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Survey has ended" });
+      }
+
+      // Check if user already responded
+      const existingResponse = await prisma.surveyResponse.findUnique({
+        where: { surveyId_userId: { surveyId: id, userId } },
+      });
+
+      if (existingResponse) {
+        return res.status(400).json({
+          success: false,
+          message: "You have already responded to this survey",
+        });
+      }
+
+      const response = await prisma.surveyResponse.create({
+        data: {
+          surveyId: id,
+          userId,
+          answers,
+        },
+      });
+
+      res.status(201).json({ success: true, data: response });
+    } catch (error) {
+      console.error("Error submitting survey response:", error);
+      res
+        .status(500)
+        .json({ success: false, message: "Failed to submit response" });
     }
+  },
+);
 
-    const response = await prisma.surveyResponse.create({
-      data: {
-        surveyId: id,
-        userId,
-        answers,
-      },
-    });
-
-    res.status(201).json({ success: true, data: response });
-  } catch (error) {
-    console.error("Error submitting survey response:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to submit response" });
-  }
-});
-
-router.get("/polls/", async (req, res) => {
+router.get("/polls/", checkFeature("ELECTION_POLLS"), async (req, res) => {
   try {
     const { communityId, id: userId } = req.user;
 
@@ -2706,7 +2772,7 @@ router.get("/polls/", async (req, res) => {
 });
 
 // ─── GET single poll ────────────────────────────────────────
-router.get("/polls/:id", async (req, res) => {
+router.get("/polls/:id", checkFeature("ELECTION_POLLS"), async (req, res) => {
   try {
     const { communityId, id: userId, role } = req.user;
     const { id } = req.params;
@@ -2785,78 +2851,82 @@ router.get("/polls/:id", async (req, res) => {
   }
 });
 
-router.post("/polls/:id/vote", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { candidateId } = req.body;
-    const userId = req.user.id;
+router.post(
+  "/polls/:id/vote",
+  checkFeature("ELECTION_POLLS"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { candidateId } = req.body;
+      const userId = req.user.id;
 
-    if (!candidateId) {
-      return res
-        .status(400)
-        .json({ success: false, message: "candidateId is required" });
-    }
+      if (!candidateId) {
+        return res
+          .status(400)
+          .json({ success: false, message: "candidateId is required" });
+      }
 
-    // Verify poll exists and belongs to user's community
-    const poll = await prisma.poll.findFirst({
-      where: { id, communityId: req.user.communityId },
-    });
-
-    if (!poll) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Poll not found" });
-    }
-
-    // Check if poll is still open
-    if (new Date() > new Date(poll.endDate)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Poll has ended" });
-    }
-
-    if (new Date() < new Date(poll.startDate)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Poll has not started yet" });
-    }
-
-    // Check if user already voted
-    const existingVote = await prisma.pollVote.findUnique({
-      where: { pollId_userId: { pollId: id, userId } },
-    });
-
-    if (existingVote) {
-      return res.status(400).json({
-        success: false,
-        message: "You have already voted in this poll",
+      // Verify poll exists and belongs to user's community
+      const poll = await prisma.poll.findFirst({
+        where: { id, communityId: req.user.communityId },
       });
+
+      if (!poll) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Poll not found" });
+      }
+
+      // Check if poll is still open
+      if (new Date() > new Date(poll.endDate)) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Poll has ended" });
+      }
+
+      if (new Date() < new Date(poll.startDate)) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Poll has not started yet" });
+      }
+
+      // Check if user already voted
+      const existingVote = await prisma.pollVote.findUnique({
+        where: { pollId_userId: { pollId: id, userId } },
+      });
+
+      if (existingVote) {
+        return res.status(400).json({
+          success: false,
+          message: "You have already voted in this poll",
+        });
+      }
+
+      // Verify candidate belongs to this poll
+      const candidate = await prisma.pollCandidate.findFirst({
+        where: { id: candidateId, pollId: id },
+      });
+
+      if (!candidate) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid candidate for this poll" });
+      }
+
+      const vote = await prisma.pollVote.create({
+        data: {
+          pollId: id,
+          candidateId,
+          userId,
+        },
+      });
+
+      res.status(201).json({ success: true, data: vote });
+    } catch (error) {
+      console.error("Error casting vote:", error);
+      res.status(500).json({ success: false, message: "Failed to cast vote" });
     }
-
-    // Verify candidate belongs to this poll
-    const candidate = await prisma.pollCandidate.findFirst({
-      where: { id: candidateId, pollId: id },
-    });
-
-    if (!candidate) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid candidate for this poll" });
-    }
-
-    const vote = await prisma.pollVote.create({
-      data: {
-        pollId: id,
-        candidateId,
-        userId,
-      },
-    });
-
-    res.status(201).json({ success: true, data: vote });
-  } catch (error) {
-    console.error("Error casting vote:", error);
-    res.status(500).json({ success: false, message: "Failed to cast vote" });
-  }
-});
+  },
+);
 
 export default router;

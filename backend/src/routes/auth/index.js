@@ -53,7 +53,11 @@ router.post("/login", async (req, res) => {
 
     const community = await prisma.community.findUnique({
       where: { id: user.communityId },
-      select: { id: true, name: true },
+      select: {
+        id: true,
+        name: true,
+        plan: { select: { id: true, name: true, features: true } },
+      },
     });
 
     const jwttoken = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, {});
@@ -63,6 +67,10 @@ router.post("/login", async (req, res) => {
       communityName: community?.name,
       unitNumber: user.unit?.number,
       blockName: user.unit?.block?.name,
+      enabledFeatures: community?.plan?.features ?? [],
+      plan: community?.plan
+        ? { id: community.plan.id, name: community.plan.name }
+        : null,
     };
 
     return res.status(200).json({ user: data, jwttoken });

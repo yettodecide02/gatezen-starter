@@ -45,6 +45,13 @@ import Shell from "./shells/Shell.jsx";
 import AdminShell from "./shells/AdminShell.jsx";
 import GatekeeperShell from "./shells/GatekeeperShell.jsx";
 
+// Super Admin
+import ProtectedSuperAdminRoute from "./ProtectedSuperAdminRoute.jsx";
+import SuperAdminShell from "./shells/SuperAdminShell.jsx";
+import SuperAdminLogin from "./pages/superadmin/SuperAdminLogin.jsx";
+import Plans from "./pages/superadmin/Plans.jsx";
+import Communities from "./pages/superadmin/Communities.jsx";
+
 /* ----------------------------- MAIN APP ROUTES ----------------------------- */
 
 export default function App() {
@@ -297,6 +304,29 @@ export default function App() {
               <Packages />
             </GatekeeperShell>
           </ProtectedRoute>
+        }
+      />
+
+      {/* Super Admin */}
+      <Route path="/superadmin/login" element={<SuperAdminLogin />} />
+      <Route
+        path="/superadmin/plans"
+        element={
+          <ProtectedSuperAdminRoute>
+            <SuperAdminShell>
+              <Plans />
+            </SuperAdminShell>
+          </ProtectedSuperAdminRoute>
+        }
+      />
+      <Route
+        path="/superadmin/communities"
+        element={
+          <ProtectedSuperAdminRoute>
+            <SuperAdminShell>
+              <Communities />
+            </SuperAdminShell>
+          </ProtectedSuperAdminRoute>
         }
       />
 
