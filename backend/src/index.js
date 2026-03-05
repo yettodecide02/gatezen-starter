@@ -9,6 +9,7 @@ import residentRoutes from "./routes/resident/index.js";
 import gatekeeperRoutes from "./routes/gatekeeper/index.js";
 import notificationsRoutes from "./routes/notifications/index.js";
 import cronRoutes from "./routes/cron/index.js";
+import superAdminRoutes from "./routes/superadmin/index.js";
 
 import { limiter } from "./middleware/auth.js";
 
@@ -16,7 +17,7 @@ const app = express();
 
 app.use(
   cors({
-    allowedHeaders: ["Authorization", "Content-Type"],
+    allowedHeaders: ["Authorization", "Content-Type", "x-setup-secret"],
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   }),
 );
@@ -32,7 +33,7 @@ app.use((req, res, next) => {
   });
   next();
 });
- 
+
 app.options("*", cors());
 
 app.get("/", (req, res) => {
@@ -45,6 +46,7 @@ app.use("/resident", residentRoutes);
 app.use("/gatekeeper", gatekeeperRoutes);
 app.use("/notifications", notificationsRoutes);
 app.use("/cron", cronRoutes);
+app.use("/superadmin", superAdminRoutes);
 
 export default app;
 

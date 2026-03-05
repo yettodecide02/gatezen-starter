@@ -13,16 +13,87 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ─── Plan-Based Feature Access ──────────────────────────────
+
+enum Feature {
+  // Basic Module — Gate Management
+  VISITOR_MANAGEMENT
+  DELIVERY_MANAGEMENT
+  DAILY_HELP_MANAGEMENT
+  VEHICLE_MANAGEMENT
+  KIDS_CHECKOUT
+  DIRECTORY
+  OVERSTAY_ALERT
+  ATTENDANCE_MARKING
+  PRE_APPROVE_ENTRY
+  EMERGENCY_CALLING
+
+  // Prime Module — Communications
+  HELPDESK
+  AMENITY_BOOKING
+  COMMUNICATION
+  HOME_PLANNER
+  RENT_A_PARKING
+  SOS_ALERT
+  E_INTERCOM
+  VEHICLE_SEARCH
+  NOTICE_BOARD
+  DOCUMENTS_UPLOADING
+  SURVEYS
+  ELECTION_POLLS
+  MEETING_ALIGNMENT
+
+  // Elite Module — Accounting
+  GUARD_PATROLLING
+  INVOICE_GENERATION
+  UTILITY_PAYMENT
+  RENT_PAYMENT
+  INCOME_EXPENSE_ANALYSIS
+  ASSET_INVENTORY_MANAGEMENT
+  FINANCIAL_REPORTS
+  FLATWISE_DUES
+  BUDGET_MAINTENANCE
+  RECEIPT_GENERATION
+  BANK_RECONCILIATION
+  MIS_REPORTS
+  SECURITY_DEPOSIT
+  BALANCE_SHEET_TAX
+}
+
+model Plan {
+  id          String      @id @default(uuid())
+  name        String      @unique
+  description String?
+  features    Feature[]
+  price       Float?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  communities Community[]
+}
+
+model SuperAdmin {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ────────────────────────────────────────────────────────────
+
 model Community {
   id               String                  @id @default(uuid())
   name             String                  @unique
   description      String?
   address          String?
   overstayLimits   Json?
+  planId           String?
   createdAt        DateTime                @default(now())
   updatedAt        DateTime                @updatedAt
   noOfBlocks       Int?
   noOfUnits        Int?
+  plan             Plan?                   @relation(fields: [planId], references: [id], onDelete: SetNull)
   blocks           Block[]
   units            Unit[]
   announcements    Announcement[]

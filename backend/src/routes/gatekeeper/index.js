@@ -1,6 +1,7 @@
 import express from "express";
 import prisma from "../../../lib/prisma.js";
 import { authMiddleware } from "../../middleware/auth.js";
+import { checkFeature } from "../../middleware/checkFeature.js";
 import nodemailer from "nodemailer";
 import { sendPushNotification } from "../../../lib/notifications.js";
 
@@ -32,7 +33,7 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-router.get("/", async (req, res) => {
+router.get("/", checkFeature("VISITOR_MANAGEMENT"), async (req, res) => {
   try {
     const visitors = await prisma.visitor.findMany({
       where: {
@@ -87,7 +88,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-router.post("/", async (req, res) => {
+router.post("/", checkFeature("VISITOR_MANAGEMENT"), async (req, res) => {
   const { id, status } = req.body;
 
   if (!id) {
@@ -309,7 +310,7 @@ router.get("/stats", async (req, res) => {
   }
 });
 
-router.get("/scan", async (req, res) => {
+router.get("/scan", checkFeature("VISITOR_MANAGEMENT"), async (req, res) => {
   const { id, communityId } = req.query;
 
   if (!id || !communityId) {
@@ -369,245 +370,257 @@ router.get("/scan", async (req, res) => {
 });
 
 // Get all visitors for a specific date range
-router.get("/visitors", async (req, res) => {
-  try {
-    const { startDate, endDate, status, visitorType } = req.query;
+router.get(
+  "/visitors",
+  checkFeature("VISITOR_MANAGEMENT"),
+  async (req, res) => {
+    try {
+      const { startDate, endDate, status, visitorType } = req.query;
 
-    let whereClause = {
-      communityId: req.user.communityId,
-    };
+      let whereClause = {
+        communityId: req.user.communityId,
+      };
 
-    // Date range filter
-    if (startDate || endDate) {
-      whereClause.visitDate = {};
-      if (startDate) {
-        whereClause.visitDate.gte = new Date(startDate);
+      // Date range filter
+      if (startDate || endDate) {
+        whereClause.visitDate = {};
+        if (startDate) {
+          whereClause.visitDate.gte = new Date(startDate);
+        }
+        if (endDate) {
+          whereClause.visitDate.lte = new Date(endDate);
+        }
       }
-      if (endDate) {
-        whereClause.visitDate.lte = new Date(endDate);
+
+      // Status filter based on check-in/out times
+      if (status) {
+        switch (status.toLowerCase()) {
+          case "checked_in":
+            whereClause.checkInAt = { not: null };
+            whereClause.checkOutAt = null;
+            break;
+          case "checked_out":
+            whereClause.checkOutAt = { not: null };
+            break;
+          case "pending":
+            whereClause.checkInAt = null;
+            whereClause.checkOutAt = null;
+            break;
+        }
       }
-    }
 
-    // Status filter based on check-in/out times
-    if (status) {
-      switch (status.toLowerCase()) {
-        case "checked_in":
-          whereClause.checkInAt = { not: null };
-          whereClause.checkOutAt = null;
-          break;
-        case "checked_out":
-          whereClause.checkOutAt = { not: null };
-          break;
-        case "pending":
-          whereClause.checkInAt = null;
-          whereClause.checkOutAt = null;
-          break;
+      // Visitor type filter
+      if (visitorType) {
+        whereClause.visitorType = visitorType.toUpperCase();
       }
-    }
 
-    // Visitor type filter
-    if (visitorType) {
-      whereClause.visitorType = visitorType.toUpperCase();
-    }
-
-    const visitors = await prisma.visitor.findMany({
-      where: whereClause,
-      include: {
-        user: {
-          select: {
-            name: true,
-            id: true,
-            unit: {
-              select: {
-                id: true,
-                number: true,
-                block: {
-                  select: {
-                    id: true,
-                    name: true,
+      const visitors = await prisma.visitor.findMany({
+        where: whereClause,
+        include: {
+          user: {
+            select: {
+              name: true,
+              id: true,
+              unit: {
+                select: {
+                  id: true,
+                  number: true,
+                  block: {
+                    select: {
+                      id: true,
+                      name: true,
+                    },
                   },
                 },
               },
             },
           },
         },
-      },
-      orderBy: {
-        visitDate: "desc",
-      },
-    });
+        orderBy: {
+          visitDate: "desc",
+        },
+      });
 
-    // Transform data to include block and unit information
-    const transformedVisitors = visitors.map((visitor) => ({
-      ...visitor,
-      hostName: visitor.user?.name || "Unknown",
-      unitNumber: visitor.user?.unit?.number || "N/A",
-      blockName: visitor.user?.unit?.block?.name || "N/A",
-      status: visitor.checkOutAt
-        ? "checked_out"
-        : visitor.checkInAt
-          ? "checked_in"
-          : "pending",
-    }));
+      // Transform data to include block and unit information
+      const transformedVisitors = visitors.map((visitor) => ({
+        ...visitor,
+        hostName: visitor.user?.name || "Unknown",
+        unitNumber: visitor.user?.unit?.number || "N/A",
+        blockName: visitor.user?.unit?.block?.name || "N/A",
+        status: visitor.checkOutAt
+          ? "checked_out"
+          : visitor.checkInAt
+            ? "checked_in"
+            : "pending",
+      }));
 
-    res.json(transformedVisitors);
-  } catch (error) {
-    console.error("Error fetching visitors:", error);
-    res.status(500).json({ error: "Internal Server Error" });
-  }
-});
+      res.json(transformedVisitors);
+    } catch (error) {
+      console.error("Error fetching visitors:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  },
+);
 
 // Check in a visitor
-router.post("/checkin/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
+router.post(
+  "/checkin/:id",
+  checkFeature("VISITOR_MANAGEMENT"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
 
-    const visitor = await prisma.visitor.findFirst({
-      where: {
-        id: String(id),
-        communityId: req.user.communityId,
-      },
-    });
+      const visitor = await prisma.visitor.findFirst({
+        where: {
+          id: String(id),
+          communityId: req.user.communityId,
+        },
+      });
 
-    if (!visitor) {
-      return res.status(404).json({ error: "Visitor not found" });
-    }
+      if (!visitor) {
+        return res.status(404).json({ error: "Visitor not found" });
+      }
 
-    if (visitor.checkInAt) {
-      return res.status(400).json({ error: "Visitor already checked in" });
-    }
+      if (visitor.checkInAt) {
+        return res.status(400).json({ error: "Visitor already checked in" });
+      }
 
-    const updatedVisitor = await prisma.visitor.update({
-      where: { id: String(id) },
-      data: {
-        checkInAt: new Date(),
-        updatedAt: new Date(),
-      },
-      include: {
-        user: {
-          select: {
-            name: true,
-            id: true,
-            pushToken: true,
-            unit: {
-              select: {
-                id: true,
-                number: true,
-                block: {
-                  select: {
-                    id: true,
-                    name: true,
+      const updatedVisitor = await prisma.visitor.update({
+        where: { id: String(id) },
+        data: {
+          checkInAt: new Date(),
+          updatedAt: new Date(),
+        },
+        include: {
+          user: {
+            select: {
+              name: true,
+              id: true,
+              pushToken: true,
+              unit: {
+                select: {
+                  id: true,
+                  number: true,
+                  block: {
+                    select: {
+                      id: true,
+                      name: true,
+                    },
                   },
                 },
               },
             },
           },
         },
-      },
-    });
+      });
 
-    // Push notification to resident
-    if (updatedVisitor.userId && updatedVisitor.user?.pushToken) {
-      await sendPushNotification(
-        updatedVisitor.user.pushToken,
-        "🚪 Visitor Arrived",
-        `${updatedVisitor.name} has checked in`,
-        { type: "VISITOR_CHECKIN", visitorId: updatedVisitor.id },
-      );
+      // Push notification to resident
+      if (updatedVisitor.userId && updatedVisitor.user?.pushToken) {
+        await sendPushNotification(
+          updatedVisitor.user.pushToken,
+          "🚪 Visitor Arrived",
+          `${updatedVisitor.name} has checked in`,
+          { type: "VISITOR_CHECKIN", visitorId: updatedVisitor.id },
+        );
+      }
+
+      const transformedVisitor = {
+        ...updatedVisitor,
+        hostName: updatedVisitor.user?.name || "Unknown",
+        unitNumber: updatedVisitor.user?.unit?.number || "N/A",
+        blockName: updatedVisitor.user?.unit?.block?.name || "N/A",
+        status: "checked_in",
+      };
+
+      res.json({
+        message: "Visitor checked in successfully",
+        visitor: transformedVisitor,
+      });
+    } catch (error) {
+      console.error("Error checking in visitor:", error);
+      res.status(500).json({ error: "Internal Server Error" });
     }
-
-    const transformedVisitor = {
-      ...updatedVisitor,
-      hostName: updatedVisitor.user?.name || "Unknown",
-      unitNumber: updatedVisitor.user?.unit?.number || "N/A",
-      blockName: updatedVisitor.user?.unit?.block?.name || "N/A",
-      status: "checked_in",
-    };
-
-    res.json({
-      message: "Visitor checked in successfully",
-      visitor: transformedVisitor,
-    });
-  } catch (error) {
-    console.error("Error checking in visitor:", error);
-    res.status(500).json({ error: "Internal Server Error" });
-  }
-});
+  },
+);
 
 // Check out a visitor
-router.post("/checkout/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
+router.post(
+  "/checkout/:id",
+  checkFeature("VISITOR_MANAGEMENT"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
 
-    const visitor = await prisma.visitor.findFirst({
-      where: {
-        id: String(id),
-        communityId: req.user.communityId,
-      },
-    });
+      const visitor = await prisma.visitor.findFirst({
+        where: {
+          id: String(id),
+          communityId: req.user.communityId,
+        },
+      });
 
-    if (!visitor) {
-      return res.status(404).json({ error: "Visitor not found" });
-    }
+      if (!visitor) {
+        return res.status(404).json({ error: "Visitor not found" });
+      }
 
-    if (visitor.checkOutAt) {
-      return res.status(400).json({ error: "Visitor already checked out" });
-    }
+      if (visitor.checkOutAt) {
+        return res.status(400).json({ error: "Visitor already checked out" });
+      }
 
-    if (!visitor.checkInAt) {
-      return res
-        .status(400)
-        .json({ error: "Visitor must be checked in first" });
-    }
+      if (!visitor.checkInAt) {
+        return res
+          .status(400)
+          .json({ error: "Visitor must be checked in first" });
+      }
 
-    const updatedVisitor = await prisma.visitor.update({
-      where: { id: String(id) },
-      data: {
-        checkOutAt: new Date(),
-        updatedAt: new Date(),
-      },
-      include: {
-        user: {
-          select: {
-            name: true,
-            id: true,
-            unit: {
-              select: {
-                id: true,
-                number: true,
-                block: {
-                  select: {
-                    id: true,
-                    name: true,
+      const updatedVisitor = await prisma.visitor.update({
+        where: { id: String(id) },
+        data: {
+          checkOutAt: new Date(),
+          updatedAt: new Date(),
+        },
+        include: {
+          user: {
+            select: {
+              name: true,
+              id: true,
+              unit: {
+                select: {
+                  id: true,
+                  number: true,
+                  block: {
+                    select: {
+                      id: true,
+                      name: true,
+                    },
                   },
                 },
               },
             },
           },
         },
-      },
-    });
+      });
 
-    const transformedVisitor = {
-      ...updatedVisitor,
-      hostName: updatedVisitor.user?.name || "Unknown",
-      unitNumber: updatedVisitor.user?.unit?.number || "N/A",
-      blockName: updatedVisitor.user?.unit?.block?.name || "N/A",
-      status: "checked_out",
-    };
+      const transformedVisitor = {
+        ...updatedVisitor,
+        hostName: updatedVisitor.user?.name || "Unknown",
+        unitNumber: updatedVisitor.user?.unit?.number || "N/A",
+        blockName: updatedVisitor.user?.unit?.block?.name || "N/A",
+        status: "checked_out",
+      };
 
-    res.json({
-      message: "Visitor checked out successfully",
-      visitor: transformedVisitor,
-    });
-  } catch (error) {
-    console.error("Error checking out visitor:", error);
-    res.status(500).json({ error: "Internal Server Error" });
-  }
-});
+      res.json({
+        message: "Visitor checked out successfully",
+        visitor: transformedVisitor,
+      });
+    } catch (error) {
+      console.error("Error checking out visitor:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  },
+);
 
 // Get current visitors (checked in but not checked out)
-router.get("/current", async (req, res) => {
+router.get("/current", checkFeature("VISITOR_MANAGEMENT"), async (req, res) => {
   try {
     const currentVisitors = await prisma.visitor.findMany({
       where: {
@@ -656,165 +669,177 @@ router.get("/current", async (req, res) => {
   }
 });
 
-router.get("/packages", async (req, res) => {
-  const { communityId } = req.query;
+router.get(
+  "/packages",
+  checkFeature("DELIVERY_MANAGEMENT"),
+  async (req, res) => {
+    const { communityId } = req.query;
 
-  if (!communityId)
-    return res.status(400).json({ error: "communityId required" });
+    if (!communityId)
+      return res.status(400).json({ error: "communityId required" });
 
-  try {
-    const result = await prisma.packages.findMany({
-      where: {
-        communityId: communityId,
-      },
-      select: {
-        id: true,
-        name: true,
-        status: true,
-        image: true,
-        createdAt: true,
-        user: {
-          select: {
-            id: true,
-            name: true,
-            unit: {
-              select: {
-                number: true,
-                block: {
-                  select: {
-                    name: true,
+    try {
+      const result = await prisma.packages.findMany({
+        where: {
+          communityId: communityId,
+        },
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          image: true,
+          createdAt: true,
+          user: {
+            select: {
+              id: true,
+              name: true,
+              unit: {
+                select: {
+                  number: true,
+                  block: {
+                    select: {
+                      name: true,
+                    },
                   },
                 },
               },
             },
           },
         },
-      },
-    });
-
-    res.status(200).send(result);
-  } catch (e) {
-    console.error(e);
-    res.status(400).json({ error: e.message });
-  }
-});
-
-router.post("/packages", async (req, res) => {
-  const { userId, communityId, image, name } = req.body;
-
-  if (!userId || !communityId)
-    return res.status(400).json({ error: "communityId and userId required" });
-  if (!name || !image)
-    return res.status(400).json({ error: "name and image required" });
-  try {
-    const result = await prisma.packages.create({
-      data: {
-        userId: userId,
-        name: name,
-        communityId: communityId,
-        image: image,
-      },
-    });
-
-    // Push notification to the resident whose package arrived
-    const resident = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { pushToken: true },
-    });
-    if (resident?.pushToken) {
-      await sendPushNotification(
-        resident.pushToken,
-        "📦 Package Arrived",
-        `Your package "${name}" has arrived at the gate`,
-        { type: "PACKAGE", packageId: result.id },
-      );
-    }
-
-    res.status(200).json({ status: "success" });
-  } catch (e) {
-    console.error(e);
-    res.status(400).json({ error: e.message });
-  }
-});
-
-router.put("/packages/:id", async (req, res) => {
-  const { id } = req.params;
-  const { status, userId, name, image } = req.body;
-
-  // Detail update (edit package info)
-  if (!status && (userId || name || image !== undefined)) {
-    try {
-      const updateData = {};
-      if (userId) updateData.userId = userId;
-      if (name) updateData.name = name;
-      if (image) updateData.image = image;
-
-      const updated = await prisma.packages.update({
-        where: { id },
-        data: updateData,
       });
-      return res.status(200).json({ status: "success", data: updated });
+
+      res.status(200).send(result);
     } catch (e) {
       console.error(e);
-      return res.status(400).json({ error: e.message });
+      res.status(400).json({ error: e.message });
     }
-  }
+  },
+);
 
-  if (!status) return res.status(400).json({ error: "status is required" });
+router.post(
+  "/packages",
+  checkFeature("DELIVERY_MANAGEMENT"),
+  async (req, res) => {
+    const { userId, communityId, image, name } = req.body;
 
-  // Map frontend values to DB enum values
-  const STATUS_MAP = { pending: "PENDING", collected: "PICKED" };
-  const dbStatus = STATUS_MAP[status?.toLowerCase()];
-  if (!dbStatus)
-    return res.status(400).json({ error: `Invalid status: ${status}` });
-
-  try {
-    const updated = await prisma.packages.update({
-      where: { id: id },
-      data: { status: dbStatus },
-      select: {
-        image: true,
-        name: true,
-        user: {
-          select: {
-            name: true,
-            email: true,
-          },
+    if (!userId || !communityId)
+      return res.status(400).json({ error: "communityId and userId required" });
+    if (!name || !image)
+      return res.status(400).json({ error: "name and image required" });
+    try {
+      const result = await prisma.packages.create({
+        data: {
+          userId: userId,
+          name: name,
+          communityId: communityId,
+          image: image,
         },
-      },
-    });
+      });
 
-    // Send email notification only when package is collected/picked
-    if (dbStatus === "PICKED") {
+      // Push notification to the resident whose package arrived
+      const resident = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { pushToken: true },
+      });
+      if (resident?.pushToken) {
+        await sendPushNotification(
+          resident.pushToken,
+          "📦 Package Arrived",
+          `Your package "${name}" has arrived at the gate`,
+          { type: "PACKAGE", packageId: result.id },
+        );
+      }
+
+      res.status(200).json({ status: "success" });
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ error: e.message });
+    }
+  },
+);
+
+router.put(
+  "/packages/:id",
+  checkFeature("DELIVERY_MANAGEMENT"),
+  async (req, res) => {
+    const { id } = req.params;
+    const { status, userId, name, image } = req.body;
+
+    // Detail update (edit package info)
+    if (!status && (userId || name || image !== undefined)) {
       try {
-        const base64Data = updated.image.includes("base64,")
-          ? updated.image.split("base64,")[1]
-          : updated.image;
-        await transporter.sendMail({
-          from: process.env.EMAIL_ID,
-          to: updated.user.email,
-          subject: `Your ${updated.name} package has been picked up`,
-          text: `Your ${updated.name} package has been collected from the gate.`,
-          attachments: [
-            {
-              filename: "package.jpg",
-              content: base64Data,
-              encoding: "base64",
-            },
-          ],
+        const updateData = {};
+        if (userId) updateData.userId = userId;
+        if (name) updateData.name = name;
+        if (image) updateData.image = image;
+
+        const updated = await prisma.packages.update({
+          where: { id },
+          data: updateData,
         });
-      } catch (emailErr) {
-        console.error("Failed to send package email:", emailErr);
-        // Non-fatal: DB update succeeded
+        return res.status(200).json({ status: "success", data: updated });
+      } catch (e) {
+        console.error(e);
+        return res.status(400).json({ error: e.message });
       }
     }
 
-    res.status(200).json({ status: "success", data: updated });
-  } catch (e) {
-    console.error(e);
-    res.status(400).json({ error: e.message });
-  }
-});
+    if (!status) return res.status(400).json({ error: "status is required" });
+
+    // Map frontend values to DB enum values
+    const STATUS_MAP = { pending: "PENDING", collected: "PICKED" };
+    const dbStatus = STATUS_MAP[status?.toLowerCase()];
+    if (!dbStatus)
+      return res.status(400).json({ error: `Invalid status: ${status}` });
+
+    try {
+      const updated = await prisma.packages.update({
+        where: { id: id },
+        data: { status: dbStatus },
+        select: {
+          image: true,
+          name: true,
+          user: {
+            select: {
+              name: true,
+              email: true,
+            },
+          },
+        },
+      });
+
+      // Send email notification only when package is collected/picked
+      if (dbStatus === "PICKED") {
+        try {
+          const base64Data = updated.image.includes("base64,")
+            ? updated.image.split("base64,")[1]
+            : updated.image;
+          await transporter.sendMail({
+            from: process.env.EMAIL_ID,
+            to: updated.user.email,
+            subject: `Your ${updated.name} package has been picked up`,
+            text: `Your ${updated.name} package has been collected from the gate.`,
+            attachments: [
+              {
+                filename: "package.jpg",
+                content: base64Data,
+                encoding: "base64",
+              },
+            ],
+          });
+        } catch (emailErr) {
+          console.error("Failed to send package email:", emailErr);
+          // Non-fatal: DB update succeeded
+        }
+      }
+
+      res.status(200).json({ status: "success", data: updated });
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ error: e.message });
+    }
+  },
+);
 
 router.get("/residents", async (req, res) => {
   const { communityId } = req.query;
@@ -850,7 +875,7 @@ router.get("/residents", async (req, res) => {
 });
 
 // Get all kid passes for the gatekeeper's community
-router.get("/kid-passes", async (req, res) => {
+router.get("/kid-passes", checkFeature("KIDS_CHECKOUT"), async (req, res) => {
   try {
     const kidPasses = await prisma.kidPass.findMany({
       where: {
@@ -895,162 +920,170 @@ router.get("/kid-passes", async (req, res) => {
 });
 
 // Update kid pass status (check in/out)
-router.post("/kid-passes/:id", async (req, res) => {
-  const { id } = req.params;
-  const { status } = req.body;
+router.post(
+  "/kid-passes/:id",
+  checkFeature("KIDS_CHECKOUT"),
+  async (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
 
-  if (!id || !status) {
-    return res.status(400).json({ error: "Missing kidPassId or status" });
-  }
-
-  try {
-    let updateData = { updatedAt: new Date() };
-
-    switch (status.toLowerCase()) {
-      case "approved":
-        updateData.status = "APPROVED";
-        break;
-      case "rejected":
-        updateData.status = "REJECTED";
-        break;
-      case "checked_in":
-        updateData.status = "CHECKED_IN";
-        updateData.checkInAt = new Date();
-        break;
-      case "checked_out":
-        updateData.status = "CHECKED_OUT";
-        updateData.checkOutAt = new Date();
-        break;
-      default:
-        return res.status(400).json({ error: "Invalid status" });
+    if (!id || !status) {
+      return res.status(400).json({ error: "Missing kidPassId or status" });
     }
 
-    const kidPass = await prisma.kidPass.update({
-      where: { id: String(id) },
-      data: updateData,
-      include: {
-        user: {
-          select: {
-            name: true,
-            id: true,
-            unit: {
-              select: {
-                number: true,
-                block: {
-                  select: {
-                    name: true,
+    try {
+      let updateData = { updatedAt: new Date() };
+
+      switch (status.toLowerCase()) {
+        case "approved":
+          updateData.status = "APPROVED";
+          break;
+        case "rejected":
+          updateData.status = "REJECTED";
+          break;
+        case "checked_in":
+          updateData.status = "CHECKED_IN";
+          updateData.checkInAt = new Date();
+          break;
+        case "checked_out":
+          updateData.status = "CHECKED_OUT";
+          updateData.checkOutAt = new Date();
+          break;
+        default:
+          return res.status(400).json({ error: "Invalid status" });
+      }
+
+      const kidPass = await prisma.kidPass.update({
+        where: { id: String(id) },
+        data: updateData,
+        include: {
+          user: {
+            select: {
+              name: true,
+              id: true,
+              unit: {
+                select: {
+                  number: true,
+                  block: {
+                    select: {
+                      name: true,
+                    },
                   },
                 },
               },
             },
           },
         },
-      },
-    });
+      });
 
-    const transformedPass = {
-      ...kidPass,
-      parentUnitNumber: kidPass.user?.unit?.number || "N/A",
-      parentBlockName: kidPass.user?.unit?.block?.name || "N/A",
-    };
+      const transformedPass = {
+        ...kidPass,
+        parentUnitNumber: kidPass.user?.unit?.number || "N/A",
+        parentBlockName: kidPass.user?.unit?.block?.name || "N/A",
+      };
 
-    res.json(transformedPass);
-  } catch (error) {
-    console.error("Error updating kid pass:", error);
-    res.status(500).json({ error: "Internal Server Error" });
-  }
-});
+      res.json(transformedPass);
+    } catch (error) {
+      console.error("Error updating kid pass:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  },
+);
 
 // ─── Vehicle Search ────────────────────────────────────────────
-router.get("/vehicle-search", async (req, res) => {
-  const { vehicleNo, communityId } = req.query;
-  if (!vehicleNo || !communityId) {
-    return res
-      .status(400)
-      .json({ error: "vehicleNo and communityId are required" });
-  }
-  const q = vehicleNo.trim().toUpperCase();
-  try {
-    // Search resident vehicles (vehicles is a String[] — filter in JS)
-    const users = await prisma.user.findMany({
-      where: {
-        communityId,
-        role: "RESIDENT",
-        status: "APPROVED",
-        vehicles: { isEmpty: false },
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        vehicles: true,
-        unit: {
-          select: {
-            number: true,
-            block: { select: { name: true } },
+router.get(
+  "/vehicle-search",
+  checkFeature("VEHICLE_SEARCH"),
+  async (req, res) => {
+    const { vehicleNo, communityId } = req.query;
+    if (!vehicleNo || !communityId) {
+      return res
+        .status(400)
+        .json({ error: "vehicleNo and communityId are required" });
+    }
+    const q = vehicleNo.trim().toUpperCase();
+    try {
+      // Search resident vehicles (vehicles is a String[] — filter in JS)
+      const users = await prisma.user.findMany({
+        where: {
+          communityId,
+          role: "RESIDENT",
+          status: "APPROVED",
+          vehicles: { isEmpty: false },
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          vehicles: true,
+          unit: {
+            select: {
+              number: true,
+              block: { select: { name: true } },
+            },
           },
         },
-      },
-    });
+      });
 
-    const residentResults = users.flatMap((u) =>
-      u.vehicles
-        .filter((v) => v.toUpperCase().includes(q))
-        .map((v) => ({
-          id: `${u.id}-${v}`,
-          vehicleNo: v,
-          vehicleType: null,
-          vehicleColor: null,
-          vehicleModel: null,
-          ownerType: "RESIDENT",
-          ownerName: u.name,
-          contact: u.phone || null,
-          email: u.email,
-          unitNumber: u.unit?.number || null,
-          blockName: u.unit?.block?.name || null,
-          registeredAt: null,
-        })),
-    );
+      const residentResults = users.flatMap((u) =>
+        u.vehicles
+          .filter((v) => v.toUpperCase().includes(q))
+          .map((v) => ({
+            id: `${u.id}-${v}`,
+            vehicleNo: v,
+            vehicleType: null,
+            vehicleColor: null,
+            vehicleModel: null,
+            ownerType: "RESIDENT",
+            ownerName: u.name,
+            contact: u.phone || null,
+            email: u.email,
+            unitNumber: u.unit?.number || null,
+            blockName: u.unit?.block?.name || null,
+            registeredAt: null,
+          })),
+      );
 
-    // Search visitor vehicles
-    const visitors = await prisma.visitor.findMany({
-      where: {
-        communityId,
-        vehicleNo: { contains: q, mode: "insensitive" },
-      },
-      select: {
-        id: true,
-        name: true,
-        contact: true,
-        vehicleNo: true,
-        visitDate: true,
-      },
-      orderBy: { visitDate: "desc" },
-      take: 20,
-    });
+      // Search visitor vehicles
+      const visitors = await prisma.visitor.findMany({
+        where: {
+          communityId,
+          vehicleNo: { contains: q, mode: "insensitive" },
+        },
+        select: {
+          id: true,
+          name: true,
+          contact: true,
+          vehicleNo: true,
+          visitDate: true,
+        },
+        orderBy: { visitDate: "desc" },
+        take: 20,
+      });
 
-    const visitorResults = visitors.map((v) => ({
-      id: v.id,
-      vehicleNo: v.vehicleNo,
-      vehicleType: null,
-      vehicleColor: null,
-      vehicleModel: null,
-      ownerType: "VISITOR",
-      ownerName: v.name,
-      contact: v.contact,
-      email: null,
-      unitNumber: null,
-      blockName: null,
-      registeredAt: v.visitDate,
-    }));
+      const visitorResults = visitors.map((v) => ({
+        id: v.id,
+        vehicleNo: v.vehicleNo,
+        vehicleType: null,
+        vehicleColor: null,
+        vehicleModel: null,
+        ownerType: "VISITOR",
+        ownerName: v.name,
+        contact: v.contact,
+        email: null,
+        unitNumber: null,
+        blockName: null,
+        registeredAt: v.visitDate,
+      }));
 
-    const vehicles = [...residentResults, ...visitorResults];
-    res.json({ vehicles, count: vehicles.length });
-  } catch (error) {
-    console.error("Vehicle search error:", error);
-    res.status(500).json({ error: "Search failed" });
-  }
-});
+      const vehicles = [...residentResults, ...visitorResults];
+      res.json({ vehicles, count: vehicles.length });
+    } catch (error) {
+      console.error("Vehicle search error:", error);
+      res.status(500).json({ error: "Search failed" });
+    }
+  },
+);
 
 export default router;

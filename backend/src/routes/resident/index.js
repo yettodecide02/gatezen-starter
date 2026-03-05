@@ -3,6 +3,7 @@ import qrcode from "qrcode";
 import nodemailer from "nodemailer";
 import prisma from "../../../lib/prisma.js";
 import { authMiddleware } from "../../middleware/auth.js";
+import { checkFeature } from "../../middleware/checkFeature.js";
 import { sendBulkPushNotifications } from "../../../lib/notifications.js";
 
 const router = express.Router();
@@ -85,7 +86,7 @@ router.get("/dashboard", async (req, res) => {
 });
 
 // Maintenance routes for residents
-router.get("/maintenance", async (req, res) => {
+router.get("/maintenance", checkFeature("HELPDESK"), async (req, res) => {
   try {
     const { userId, communityId } = req.query;
     const tickets = await prisma.ticket.findMany({
@@ -116,7 +117,7 @@ router.get("/maintenance", async (req, res) => {
   }
 });
 
-router.post("/maintenance", async (req, res) => {
+router.post("/maintenance", checkFeature("HELPDESK"), async (req, res) => {
   try {
     const { userId, title, category, description, communityId } = req.body;
 
@@ -182,206 +183,217 @@ router.post("/maintenance", async (req, res) => {
   }
 });
 
-router.post("/maintenance/:id/comments", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { userId, name, text } = req.body;
+router.post(
+  "/maintenance/:id/comments",
+  checkFeature("HELPDESK"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { userId, name, text } = req.body;
 
-    const comment = await prisma.comment.create({
-      data: { text, userId, ticketId: id },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            role: true,
+      const comment = await prisma.comment.create({
+        data: { text, userId, ticketId: id },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              role: true,
+            },
           },
         },
-      },
-    });
+      });
 
-    res.status(201).json({
-      id: comment.id,
-      text: comment.text,
-      userId: comment.userId,
-      name: name || comment.user?.name,
-      at: comment.createdAt,
-    });
-  } catch (err) {
-    console.error("Error adding comment:", err);
-    res.status(500).json({ error: "Failed to add comment" });
-  }
-});
+      res.status(201).json({
+        id: comment.id,
+        text: comment.text,
+        userId: comment.userId,
+        name: name || comment.user?.name,
+        at: comment.createdAt,
+      });
+    } catch (err) {
+      console.error("Error adding comment:", err);
+      res.status(500).json({ error: "Failed to add comment" });
+    }
+  },
+);
 
 // Get visitors for a resident
-router.get("/visitors", async (req, res) => {
-  try {
-    const { from, to, communityId, userId } = req.query;
+router.get(
+  "/visitors",
+  checkFeature("VISITOR_MANAGEMENT"),
+  async (req, res) => {
+    try {
+      const { from, to, communityId, userId } = req.query;
 
-    if (!communityId) {
-      return res.status(400).json({ error: "communityId is required" });
-    }
+      if (!communityId) {
+        return res.status(400).json({ error: "communityId is required" });
+      }
 
-    // Build where clause
-    const whereClause = {
-      communityId: String(communityId),
-    };
+      // Build where clause
+      const whereClause = {
+        communityId: String(communityId),
+      };
 
-    // If userId is provided, filter by resident (for resident's own visitors)
-    if (userId) {
-      whereClause.userId = String(userId);
-    }
+      // If userId is provided, filter by resident (for resident's own visitors)
+      if (userId) {
+        whereClause.userId = String(userId);
+      }
 
-    // Date range filtering — frontend sends full ISO local-day boundaries
-    whereClause.visitDate = {};
-    if (from) {
-      whereClause.visitDate.gte = new Date(from);
-    }
+      // Date range filtering — frontend sends full ISO local-day boundaries
+      whereClause.visitDate = {};
+      if (from) {
+        whereClause.visitDate.gte = new Date(from);
+      }
 
-    if (to) {
-      whereClause.visitDate.lte = new Date(to);
-    }
+      if (to) {
+        whereClause.visitDate.lte = new Date(to);
+      }
 
-    const visitors = await prisma.visitor.findMany({
-      where: whereClause,
-      include: {
-        user: {
-          select: {
-            name: true,
-            id: true,
-            unit: {
-              select: {
-                id: true,
-                number: true,
-                block: {
-                  select: {
-                    id: true,
-                    name: true,
+      const visitors = await prisma.visitor.findMany({
+        where: whereClause,
+        include: {
+          user: {
+            select: {
+              name: true,
+              id: true,
+              unit: {
+                select: {
+                  id: true,
+                  number: true,
+                  block: {
+                    select: {
+                      id: true,
+                      name: true,
+                    },
                   },
                 },
               },
             },
           },
         },
-      },
-      orderBy: {
-        visitDate: "desc",
-      },
-    });
-    // Transform data to match frontend expectations
-    const transformedVisitors = visitors.map((visitor) => ({
-      ...visitor,
-      hostName: visitor.user?.name || "Unknown",
-      unitNumber: visitor.user?.unit?.number || "N/A",
-      blockName: visitor.user?.unit?.block?.name || "N/A",
-      status: visitor.checkOutAt
-        ? "checked_out"
-        : visitor.checkInAt
-          ? "checked_in"
-          : "pending",
-    }));
-
-    res.status(200).json(transformedVisitors);
-  } catch (e) {
-    console.error("Error fetching visitors:", e);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-router.post("/visitor-creation", async (req, res) => {
-  try {
-    const {
-      name,
-      contact,
-      visitorType,
-      visitDate,
-      vehicleNo,
-      communityId,
-      userId,
-    } = req.body || {};
-
-    // Use authenticated user's ID as userId if not provided
-    const actualUserId = userId || req.user?.id;
-
-    if (!name || !communityId || !actualUserId) {
-      return res.status(400).json({
-        error: "Missing required fields: name, communityId, and userId",
+        orderBy: {
+          visitDate: "desc",
+        },
       });
+      // Transform data to match frontend expectations
+      const transformedVisitors = visitors.map((visitor) => ({
+        ...visitor,
+        hostName: visitor.user?.name || "Unknown",
+        unitNumber: visitor.user?.unit?.number || "N/A",
+        blockName: visitor.user?.unit?.block?.name || "N/A",
+        status: visitor.checkOutAt
+          ? "checked_out"
+          : visitor.checkInAt
+            ? "checked_in"
+            : "pending",
+      }));
+
+      res.status(200).json(transformedVisitors);
+    } catch (e) {
+      console.error("Error fetching visitors:", e);
+      res.status(500).json({ error: "Internal server error" });
     }
+  },
+);
 
-    const validTypes = ["GUEST", "DELIVERY", "CAB_AUTO"];
-    const actualVisitorType =
-      visitorType && validTypes.includes(visitorType.toUpperCase())
-        ? visitorType.toUpperCase()
-        : "GUEST";
+router.post(
+  "/visitor-creation",
+  checkFeature("VISITOR_MANAGEMENT"),
+  async (req, res) => {
+    try {
+      const {
+        name,
+        contact,
+        visitorType,
+        visitDate,
+        vehicleNo,
+        communityId,
+        userId,
+      } = req.body || {};
 
-    if (actualVisitorType === "GUEST") {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(contact)) {
+      // Use authenticated user's ID as userId if not provided
+      const actualUserId = userId || req.user?.id;
+
+      if (!name || !communityId || !actualUserId) {
         return res.status(400).json({
-          error:
-            "Valid email is required in contact field for GUEST visitor type",
+          error: "Missing required fields: name, communityId, and userId",
         });
       }
-    }
 
-    const visitorData = {
-      name,
-      contact,
-      vehicleNo,
-      visitorType: actualVisitorType,
-      visitDate: visitDate ? new Date(visitDate) : new Date(),
-      communityId: String(communityId),
-      userId: String(actualUserId),
-    };
+      const validTypes = ["GUEST", "DELIVERY", "CAB_AUTO"];
+      const actualVisitorType =
+        visitorType && validTypes.includes(visitorType.toUpperCase())
+          ? visitorType.toUpperCase()
+          : "GUEST";
 
-    const visitor = await prisma.visitor.create({
-      data: visitorData,
-      select: {
-        id: true,
-        name: true,
-        contact: true,
-        vehicleNo: true,
-        visitorType: true,
-        visitDate: true,
-        checkInAt: true,
-        checkOutAt: true,
-        communityId: true,
-        userId: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+      if (actualVisitorType === "GUEST") {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(contact)) {
+          return res.status(400).json({
+            error:
+              "Valid email is required in contact field for GUEST visitor type",
+          });
+        }
+      }
 
-    if (!visitor) {
-      throw new Error("Visitor creation failed");
-    }
+      const visitorData = {
+        name,
+        contact,
+        vehicleNo,
+        visitorType: actualVisitorType,
+        visitDate: visitDate ? new Date(visitDate) : new Date(),
+        communityId: String(communityId),
+        userId: String(actualUserId),
+      };
 
-    // Send QR code email for GUEST visitors
-    if (visitor.visitorType === "GUEST") {
-      if (!process.env.EMAIL_ID || !process.env.EMAIL_PASSWORD) {
-        console.warn("Email credentials not configured — skipping QR email");
-      } else {
-        try {
-          const qrPngBuffer = await qrcode.toBuffer(
-            `${process.env.BACKEND_URL}/gatekeeper/scan?id=${visitor.id}&communityId=${visitor.communityId}`,
-            {
-              type: "png",
-              width: 300,
-              margin: 2,
-              errorCorrectionLevel: "M",
-            },
-          );
+      const visitor = await prisma.visitor.create({
+        data: visitorData,
+        select: {
+          id: true,
+          name: true,
+          contact: true,
+          vehicleNo: true,
+          visitorType: true,
+          visitDate: true,
+          checkInAt: true,
+          checkOutAt: true,
+          communityId: true,
+          userId: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
 
-          const qrCid = `qr-${visitor.id}@gatezen`;
-          const subject = `Your GateZen visitor pass (QR) — ${name}`;
+      if (!visitor) {
+        throw new Error("Visitor creation failed");
+      }
 
-          await transporter.sendMail({
-            from: process.env.EMAIL_ID,
-            to: contact,
-            subject,
-            text: `Hi ${name},\n\nPlease scan this QR code at the entrance to check in:`,
-            html: `
+      // Send QR code email for GUEST visitors
+      if (visitor.visitorType === "GUEST") {
+        if (!process.env.EMAIL_ID || !process.env.EMAIL_PASSWORD) {
+          console.warn("Email credentials not configured — skipping QR email");
+        } else {
+          try {
+            const qrPngBuffer = await qrcode.toBuffer(
+              `${process.env.BACKEND_URL}/gatekeeper/scan?id=${visitor.id}&communityId=${visitor.communityId}`,
+              {
+                type: "png",
+                width: 300,
+                margin: 2,
+                errorCorrectionLevel: "M",
+              },
+            );
+
+            const qrCid = `qr-${visitor.id}@gatezen`;
+            const subject = `Your GateZen visitor pass (QR) — ${name}`;
+
+            await transporter.sendMail({
+              from: process.env.EMAIL_ID,
+              to: contact,
+              subject,
+              text: `Hi ${name},\n\nPlease scan this QR code at the entrance to check in:`,
+              html: `
             <div style="font-family: Arial, sans-serif; line-height: 1.5; color: #111;">
               <h2 style="margin: 0 0 12px;">Hi ${name},</h2>
               <p style="margin: 0 0 12px;">Your visitor pass is ready. Show this QR at the gate:</p>
@@ -389,33 +401,34 @@ router.post("/visitor-creation", async (req, res) => {
               <p style="margin: 0;">Thanks,<br/>GateZen</p>
             </div>
           `,
-            attachments: [
-              {
-                filename: "visitor-qr.png",
-                content: qrPngBuffer,
-                contentType: "image/png",
-                cid: qrCid,
-              },
-            ],
-          });
-        } catch (emailErr) {
-          console.error("Failed to send QR email:", emailErr);
-          // Visitor was already created — don't fail the request
+              attachments: [
+                {
+                  filename: "visitor-qr.png",
+                  content: qrPngBuffer,
+                  contentType: "image/png",
+                  cid: qrCid,
+                },
+              ],
+            });
+          } catch (emailErr) {
+            console.error("Failed to send QR email:", emailErr);
+            // Visitor was already created — don't fail the request
+          }
         }
       }
+
+      return res.status(201).json({
+        visitor: visitor,
+        message: "Visitor created successfully",
+      });
+    } catch (err) {
+      console.error("Error creating visitor:", err);
+      return res.status(500).json({ error: "Failed to create visitor" });
     }
+  },
+);
 
-    return res.status(201).json({
-      visitor: visitor,
-      message: "Visitor created successfully",
-    });
-  } catch (err) {
-    console.error("Error creating visitor:", err);
-    return res.status(500).json({ error: "Failed to create visitor" });
-  }
-});
-
-router.get("/facilities", async (req, res) => {
+router.get("/facilities", checkFeature("AMENITY_BOOKING"), async (req, res) => {
   try {
     const { communityId } = req.query;
 
@@ -534,7 +547,7 @@ function overlaps(aStart, aEnd, bStart, bEnd) {
 }
 
 // GET /bookings?facilityId=&date=YYYY-MM-DD
-router.get("/bookings", async (req, res) => {
+router.get("/bookings", checkFeature("AMENITY_BOOKING"), async (req, res) => {
   try {
     const { facilityId, date } = req.query;
     if (!facilityId || !date) {
@@ -602,42 +615,46 @@ router.get("/bookings", async (req, res) => {
 });
 
 // GET /user-bookings?userId=xxx&date=YYYY-MM-DD
-router.get("/user-bookings", async (req, res) => {
-  try {
-    const { userId, date } = req.query;
-    if (!userId || !date) {
-      return res.status(400).json({ error: "userId and date are required" });
+router.get(
+  "/user-bookings",
+  checkFeature("AMENITY_BOOKING"),
+  async (req, res) => {
+    try {
+      const { userId, date } = req.query;
+      if (!userId || !date) {
+        return res.status(400).json({ error: "userId and date are required" });
+      }
+
+      const dayStart = new Date(`${date}T00:00:00.000Z`);
+      const dayEnd = new Date(dayStart.getTime() + 24 * 3600e3);
+
+      if (isNaN(dayStart.getTime())) {
+        return res
+          .status(400)
+          .json({ error: "Invalid date format. Use YYYY-MM-DD" });
+      }
+
+      const bookings = await prisma.booking.findMany({
+        where: {
+          userId,
+          status: "CONFIRMED",
+          startsAt: { gte: dayStart, lt: dayEnd },
+        },
+      });
+      // Normalize status to lowercase to match the frontend expectation
+      const payload = bookings.map((b) => ({
+        ...b,
+        status: b.status === "CANCELLED" ? "cancelled" : "confirmed",
+      }));
+      res.json(payload);
+    } catch (err) {
+      console.error("Error fetching user bookings:", err);
+      res.status(500).json({ error: "Failed to fetch user bookings" });
     }
+  },
+);
 
-    const dayStart = new Date(`${date}T00:00:00.000Z`);
-    const dayEnd = new Date(dayStart.getTime() + 24 * 3600e3);
-
-    if (isNaN(dayStart.getTime())) {
-      return res
-        .status(400)
-        .json({ error: "Invalid date format. Use YYYY-MM-DD" });
-    }
-
-    const bookings = await prisma.booking.findMany({
-      where: {
-        userId,
-        status: "CONFIRMED",
-        startsAt: { gte: dayStart, lt: dayEnd },
-      },
-    });
-    // Normalize status to lowercase to match the frontend expectation
-    const payload = bookings.map((b) => ({
-      ...b,
-      status: b.status === "CANCELLED" ? "cancelled" : "confirmed",
-    }));
-    res.json(payload);
-  } catch (err) {
-    console.error("Error fetching user bookings:", err);
-    res.status(500).json({ error: "Failed to fetch user bookings" });
-  }
-});
-
-router.post("/bookings", async (req, res) => {
+router.post("/bookings", checkFeature("AMENITY_BOOKING"), async (req, res) => {
   try {
     const { userId, facilityId, startsAt, endsAt, note, peopleCount } =
       req.body;
@@ -1041,7 +1058,7 @@ router.get("/announcements", async (req, res) => {
 });
 
 // Get resident's payments
-router.get("/payments", async (req, res) => {
+router.get("/payments", checkFeature("UTILITY_PAYMENT"), async (req, res) => {
   try {
     const { communityId, status, from, to } = req.query;
     const userId = req.user.id;
@@ -1220,7 +1237,7 @@ router.get("/packages", async (req, res) => {
 });
 
 // Get neighbor information (residents in the same block)
-router.get("/neighbors", async (req, res) => {
+router.get("/neighbors", checkFeature("DIRECTORY"), async (req, res) => {
   try {
     const userId = req.user.id;
 
@@ -1358,7 +1375,7 @@ router.get("/directory", async (req, res) => {
   }
 });
 
-router.get("/pdfs", async (req, res) => {
+router.get("/pdfs", checkFeature("DOCUMENTS_UPLOADING"), async (req, res) => {
   try {
     const { communityId } = req.query;
 
@@ -1381,66 +1398,70 @@ router.get("/pdfs", async (req, res) => {
   }
 });
 
-router.get("/pdf/:id", async (req, res) => {
-  const { id } = req.params;
-  try {
-    const pdf = await prisma.pdfs.findUnique({ where: { id } });
-
-    if (!pdf) {
-      console.error("PDF not found:", id);
-      return res.status(404).json({ error: "PDF not found" });
-    }
-
-    if (!pdf.content) {
-      console.error("PDF content is empty:", id);
-      return res.status(400).json({ error: "PDF content is empty" });
-    }
-
-    // Convert content to Buffer if it's a string (base64) or already a Buffer
-    let pdfBuffer;
+router.get(
+  "/pdf/:id",
+  checkFeature("DOCUMENTS_UPLOADING"),
+  async (req, res) => {
+    const { id } = req.params;
     try {
-      if (typeof pdf.content === "string") {
-        // Try to decode from base64
-        pdfBuffer = Buffer.from(pdf.content, "base64");
-      } else if (Buffer.isBuffer(pdf.content)) {
-        pdfBuffer = pdf.content;
-      } else if (pdf.content instanceof Uint8Array) {
-        pdfBuffer = Buffer.from(pdf.content);
-      } else {
-        console.error("Unknown PDF content type:", typeof pdf.content);
-        return res.status(400).json({ error: "Invalid PDF content format" });
+      const pdf = await prisma.pdfs.findUnique({ where: { id } });
+
+      if (!pdf) {
+        console.error("PDF not found:", id);
+        return res.status(404).json({ error: "PDF not found" });
       }
-    } catch (bufferError) {
-      console.error("Error converting PDF content:", bufferError);
-      return res.status(400).json({ error: "Failed to process PDF content" });
+
+      if (!pdf.content) {
+        console.error("PDF content is empty:", id);
+        return res.status(400).json({ error: "PDF content is empty" });
+      }
+
+      // Convert content to Buffer if it's a string (base64) or already a Buffer
+      let pdfBuffer;
+      try {
+        if (typeof pdf.content === "string") {
+          // Try to decode from base64
+          pdfBuffer = Buffer.from(pdf.content, "base64");
+        } else if (Buffer.isBuffer(pdf.content)) {
+          pdfBuffer = pdf.content;
+        } else if (pdf.content instanceof Uint8Array) {
+          pdfBuffer = Buffer.from(pdf.content);
+        } else {
+          console.error("Unknown PDF content type:", typeof pdf.content);
+          return res.status(400).json({ error: "Invalid PDF content format" });
+        }
+      } catch (bufferError) {
+        console.error("Error converting PDF content:", bufferError);
+        return res.status(400).json({ error: "Failed to process PDF content" });
+      }
+
+      if (!pdfBuffer || pdfBuffer.length === 0) {
+        console.error("PDF buffer is empty after conversion");
+        return res.status(400).json({ error: "PDF content is empty" });
+      }
+
+      const fileName = pdf.name.endsWith(".pdf") ? pdf.name : `${pdf.name}.pdf`;
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Length", pdfBuffer.length);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${encodeURIComponent(fileName)}"`,
+      );
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+
+      res.end(pdfBuffer);
+    } catch (e) {
+      console.error("Error fetching PDF:", e.message, e.stack);
+      res.status(500).json({ error: "Server error: " + e.message });
     }
-
-    if (!pdfBuffer || pdfBuffer.length === 0) {
-      console.error("PDF buffer is empty after conversion");
-      return res.status(400).json({ error: "PDF content is empty" });
-    }
-
-    const fileName = pdf.name.endsWith(".pdf") ? pdf.name : `${pdf.name}.pdf`;
-
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Length", pdfBuffer.length);
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${encodeURIComponent(fileName)}"`,
-    );
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    res.setHeader("Pragma", "no-cache");
-    res.setHeader("Expires", "0");
-
-    res.end(pdfBuffer);
-  } catch (e) {
-    console.error("Error fetching PDF:", e.message, e.stack);
-    res.status(500).json({ error: "Server error: " + e.message });
-  }
-});
+  },
+);
 
 // Get kid passes for a resident
-router.get("/kid-passes", async (req, res) => {
+router.get("/kid-passes", checkFeature("KIDS_CHECKOUT"), async (req, res) => {
   try {
     const { userId, communityId } = req.query;
 
@@ -1474,7 +1495,7 @@ router.get("/kid-passes", async (req, res) => {
 });
 
 // Create a kid pass
-router.post("/kid-passes", async (req, res) => {
+router.post("/kid-passes", checkFeature("KIDS_CHECKOUT"), async (req, res) => {
   try {
     const {
       childName,
@@ -1526,7 +1547,7 @@ router.post("/kid-passes", async (req, res) => {
   }
 });
 
-router.get("/notice-board/", async (req, res) => {
+router.get("/notice-board/", checkFeature("NOTICE_BOARD"), async (req, res) => {
   try {
     const { communityId } = req.user;
 
@@ -1544,7 +1565,7 @@ router.get("/notice-board/", async (req, res) => {
   }
 });
 
-router.get("/surveys/", async (req, res) => {
+router.get("/surveys/", checkFeature("SURVEYS"), async (req, res) => {
   try {
     const { communityId, id: userId } = req.user;
 
@@ -1595,66 +1616,70 @@ router.get("/surveys/", async (req, res) => {
   }
 });
 
-router.post("/surveys/:id/respond", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { answers } = req.body;
-    const userId = req.user.id;
+router.post(
+  "/surveys/:id/respond",
+  checkFeature("SURVEYS"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { answers } = req.body;
+      const userId = req.user.id;
 
-    if (!answers) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Answers are required" });
-    }
+      if (!answers) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Answers are required" });
+      }
 
-    // Verify survey exists and belongs to user's community
-    const survey = await prisma.survey.findFirst({
-      where: { id, communityId: req.user.communityId },
-    });
-
-    if (!survey) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Survey not found" });
-    }
-
-    // Check if survey is still open
-    if (new Date() > new Date(survey.endDate)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Survey has ended" });
-    }
-
-    // Check if user already responded
-    const existingResponse = await prisma.surveyResponse.findUnique({
-      where: { surveyId_userId: { surveyId: id, userId } },
-    });
-
-    if (existingResponse) {
-      return res.status(400).json({
-        success: false,
-        message: "You have already responded to this survey",
+      // Verify survey exists and belongs to user's community
+      const survey = await prisma.survey.findFirst({
+        where: { id, communityId: req.user.communityId },
       });
+
+      if (!survey) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Survey not found" });
+      }
+
+      // Check if survey is still open
+      if (new Date() > new Date(survey.endDate)) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Survey has ended" });
+      }
+
+      // Check if user already responded
+      const existingResponse = await prisma.surveyResponse.findUnique({
+        where: { surveyId_userId: { surveyId: id, userId } },
+      });
+
+      if (existingResponse) {
+        return res.status(400).json({
+          success: false,
+          message: "You have already responded to this survey",
+        });
+      }
+
+      const response = await prisma.surveyResponse.create({
+        data: {
+          surveyId: id,
+          userId,
+          answers,
+        },
+      });
+
+      res.status(201).json({ success: true, data: response });
+    } catch (error) {
+      console.error("Error submitting survey response:", error);
+      res
+        .status(500)
+        .json({ success: false, message: "Failed to submit response" });
     }
+  },
+);
 
-    const response = await prisma.surveyResponse.create({
-      data: {
-        surveyId: id,
-        userId,
-        answers,
-      },
-    });
-
-    res.status(201).json({ success: true, data: response });
-  } catch (error) {
-    console.error("Error submitting survey response:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to submit response" });
-  }
-});
-
-router.get("/polls/", async (req, res) => {
+router.get("/polls/", checkFeature("ELECTION_POLLS"), async (req, res) => {
   try {
     const { communityId, id: userId } = req.user;
 
@@ -1756,80 +1781,82 @@ router.get("/polls/:id", async (req, res) => {
   }
 });
 
-router.post("/polls/:id/vote", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { candidateId } = req.body;
-    const userId = req.user.id;
+router.post(
+  "/polls/:id/vote",
+  checkFeature("ELECTION_POLLS"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { candidateId } = req.body;
+      const userId = req.user.id;
 
-    if (!candidateId) {
-      return res
-        .status(400)
-        .json({ success: false, message: "candidateId is required" });
-    }
+      if (!candidateId) {
+        return res
+          .status(400)
+          .json({ success: false, message: "candidateId is required" });
+      }
 
-    // Verify poll exists and belongs to user's community
-    const poll = await prisma.poll.findFirst({
-      where: { id, communityId: req.user.communityId },
-    });
-
-    if (!poll) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Poll not found" });
-    }
-
-    // Check if poll is still open
-    if (new Date() > new Date(poll.endDate)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Poll has ended" });
-    }
-
-    if (new Date() < new Date(poll.startDate)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Poll has not started yet" });
-    }
-
-    // Check if user already voted
-    const existingVote = await prisma.pollVote.findUnique({
-      where: { pollId_userId: { pollId: id, userId } },
-    });
-
-    if (existingVote) {
-      return res.status(400).json({
-        success: false,
-        message: "You have already voted in this poll",
+      // Verify poll exists and belongs to user's community
+      const poll = await prisma.poll.findFirst({
+        where: { id, communityId: req.user.communityId },
       });
+
+      if (!poll) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Poll not found" });
+      }
+
+      // Check if poll is still open
+      if (new Date() > new Date(poll.endDate)) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Poll has ended" });
+      }
+
+      if (new Date() < new Date(poll.startDate)) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Poll has not started yet" });
+      }
+
+      // Check if user already voted
+      const existingVote = await prisma.pollVote.findUnique({
+        where: { pollId_userId: { pollId: id, userId } },
+      });
+
+      if (existingVote) {
+        return res.status(400).json({
+          success: false,
+          message: "You have already voted in this poll",
+        });
+      }
+
+      // Verify candidate belongs to this poll
+      const candidate = await prisma.pollCandidate.findFirst({
+        where: { id: candidateId, pollId: id },
+      });
+
+      if (!candidate) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid candidate for this poll" });
+      }
+
+      const vote = await prisma.pollVote.create({
+        data: {
+          pollId: id,
+          candidateId,
+          userId,
+        },
+      });
+
+      res.status(201).json({ success: true, data: vote });
+    } catch (error) {
+      console.error("Error casting vote:", error);
+      res.status(500).json({ success: false, message: "Failed to cast vote" });
     }
-
-    // Verify candidate belongs to this poll
-    const candidate = await prisma.pollCandidate.findFirst({
-      where: { id: candidateId, pollId: id },
-    });
-
-    if (!candidate) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid candidate for this poll" });
-    }
-
-    const vote = await prisma.pollVote.create({
-      data: {
-        pollId: id,
-        candidateId,
-        userId,
-      },
-    });
-
-    res.status(201).json({ success: true, data: vote });
-  } catch (error) {
-    console.error("Error casting vote:", error);
-    res.status(500).json({ success: false, message: "Failed to cast vote" });
-  }
-});
+  },
+);
 
 export default router;
-
-
