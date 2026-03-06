@@ -7,6 +7,7 @@ import authRoutes from "./routes/auth/index.js";
 import adminRoutes from "./routes/admin/index.js";
 import residentRoutes from "./routes/resident/index.js";
 import gatekeeperRoutes from "./routes/gatekeeper/index.js";
+import intercomRoutes from "./routes/intercom/index.js";
 import notificationsRoutes from "./routes/notifications/index.js";
 import cronRoutes from "./routes/cron/index.js";
 import superAdminRoutes from "./routes/superadmin/index.js";
@@ -18,7 +19,7 @@ const app = express();
 app.use(
   cors({
     allowedHeaders: ["Authorization", "Content-Type", "x-setup-secret"],
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   }),
 );
 app.use(express.json());
@@ -44,6 +45,7 @@ app.use("/auth", authRoutes);
 app.use("/admin", adminRoutes);
 app.use("/resident", residentRoutes);
 app.use("/gatekeeper", gatekeeperRoutes);
+app.use("/intercom", intercomRoutes);
 app.use("/notifications", notificationsRoutes);
 app.use("/cron", cronRoutes);
 app.use("/superadmin", superAdminRoutes);
