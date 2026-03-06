@@ -2929,4 +2929,194 @@ router.post(
   },
 );
 
+// ─── Vehicle Management (Admin) ──────────────────────────────
+
+// GET /admin/vehicles?communityId&status
+router.get(
+  "/vehicles",
+  checkFeature("VEHICLE_MANAGEMENT"),
+  async (req, res) => {
+    const { communityId, status } = req.query;
+    if (!communityId) {
+      return res.status(400).json({ error: "communityId is required" });
+    }
+    const where = { communityId };
+    if (status) where.status = status.toUpperCase();
+
+    try {
+      const vehicles = await prisma.vehicle.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              name: true,
+              unit: {
+                select: {
+                  number: true,
+                  block: { select: { name: true } },
+                },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      const result = vehicles.map((v) => ({
+        ...v,
+        user: {
+          name: v.user?.name || "Unknown",
+          unitNumber: v.user?.unit?.number || "N/A",
+          blockName: v.user?.unit?.block?.name || "N/A",
+        },
+      }));
+
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching vehicles:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  },
+);
+
+// PATCH /admin/vehicles/:id
+router.patch(
+  "/vehicles/:id",
+  checkFeature("VEHICLE_MANAGEMENT"),
+  async (req, res) => {
+    const { id } = req.params;
+    const { status, rejectionReason } = req.body;
+
+    const validStatuses = ["APPROVED", "REJECTED"];
+    if (!status || !validStatuses.includes(status)) {
+      return res
+        .status(400)
+        .json({ error: "status must be APPROVED or REJECTED" });
+    }
+
+    try {
+      const data = { status };
+      if (status === "REJECTED" && rejectionReason) {
+        data.rejectionReason = rejectionReason;
+      }
+      const vehicle = await prisma.vehicle.update({ where: { id }, data });
+      res.json(vehicle);
+    } catch (error) {
+      console.error("Error updating vehicle status:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  },
+);
+
+// ─── Parking Management (Admin) ──────────────────────────────
+
+// GET /admin/parking/spots?communityId
+router.get(
+  "/parking/spots",
+  checkFeature("RENT_A_PARKING"),
+  async (req, res) => {
+    const { communityId } = req.query;
+    if (!communityId) {
+      return res.status(400).json({ error: "communityId is required" });
+    }
+    try {
+      const spots = await prisma.parkingSpot.findMany({
+        where: { communityId },
+        orderBy: { spotNumber: "asc" },
+      });
+      res.json(spots);
+    } catch (error) {
+      console.error("Error fetching parking spots:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  },
+);
+
+// POST /admin/parking/spots
+router.post(
+  "/parking/spots",
+  checkFeature("RENT_A_PARKING"),
+  async (req, res) => {
+    const {
+      spotNumber,
+      spotType,
+      floor,
+      block,
+      pricePerDay,
+      isAvailable,
+      communityId,
+    } = req.body;
+
+    if (!spotNumber || !spotType || !communityId || pricePerDay === undefined) {
+      return res.status(400).json({
+        error: "spotNumber, spotType, pricePerDay and communityId are required",
+      });
+    }
+
+    const validTypes = ["TWO_WHEELER", "FOUR_WHEELER", "EV"];
+    if (!validTypes.includes(spotType)) {
+      return res.status(400).json({ error: `Invalid spotType: ${spotType}` });
+    }
+
+    try {
+      const spot = await prisma.parkingSpot.create({
+        data: {
+          spotNumber,
+          spotType,
+          floor,
+          block,
+          pricePerDay: parseFloat(pricePerDay),
+          isAvailable: isAvailable !== undefined ? Boolean(isAvailable) : true,
+          communityId,
+        },
+      });
+      res.status(201).json(spot);
+    } catch (error) {
+      console.error("Error creating parking spot:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  },
+);
+
+// PATCH /admin/parking/spots/:id
+router.patch(
+  "/parking/spots/:id",
+  checkFeature("RENT_A_PARKING"),
+  async (req, res) => {
+    const { id } = req.params;
+    const { isAvailable } = req.body;
+
+    if (isAvailable === undefined) {
+      return res.status(400).json({ error: "isAvailable is required" });
+    }
+
+    try {
+      const spot = await prisma.parkingSpot.update({
+        where: { id },
+        data: { isAvailable: Boolean(isAvailable) },
+      });
+      res.json(spot);
+    } catch (error) {
+      console.error("Error updating parking spot:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  },
+);
+
+// DELETE /admin/parking/spots/:id
+router.delete(
+  "/parking/spots/:id",
+  checkFeature("RENT_A_PARKING"),
+  async (req, res) => {
+    const { id } = req.params;
+    try {
+      await prisma.parkingSpot.delete({ where: { id } });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting parking spot:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  },
+);
+
 export default router;

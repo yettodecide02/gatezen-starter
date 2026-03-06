@@ -10,6 +10,12 @@ import gatekeeperRoutes from "./routes/gatekeeper/index.js";
 import notificationsRoutes from "./routes/notifications/index.js";
 import cronRoutes from "./routes/cron/index.js";
 import superAdminRoutes from "./routes/superadmin/index.js";
+import intercomRoutes from "./routes/intercom/index.js";
+import vehiclesRoutes from "./routes/vehicles/index.js";
+import parkingRoutes from "./routes/parking/index.js";
+import meetingsRoutes from "./routes/meetings/index.js";
+import homePlannerRoutes from "./routes/home-planner/index.js";
+import emergencyRoutes from "./routes/emergency/index.js";
 
 import { limiter } from "./middleware/auth.js";
 
@@ -47,6 +53,12 @@ app.use("/gatekeeper", gatekeeperRoutes);
 app.use("/notifications", notificationsRoutes);
 app.use("/cron", cronRoutes);
 app.use("/superadmin", superAdminRoutes);
+app.use("/intercom", intercomRoutes);
+app.use("/vehicles", vehiclesRoutes);
+app.use("/parking", parkingRoutes);
+app.use("/meetings", meetingsRoutes);
+app.use("/home-planner", homePlannerRoutes);
+app.use("/emergency", emergencyRoutes);
 
 export default app;
 
