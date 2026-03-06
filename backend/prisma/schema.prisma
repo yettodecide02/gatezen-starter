@@ -108,11 +108,14 @@ model Community {
   packages         Packages[]
   pdfs             Pdfs[]
   notices          Notice[]
-  surveys           Survey[]
-  polls             Poll[]
-  vehicleRecords    Vehicle[]
-  meetings          Meeting[]
-  homePlannerTasks  HomePlannerTask[]
+  surveys          Survey[]
+  polls            Poll[]
+  vehicleRegistrations Vehicle[]
+  parkingSpots     ParkingSpot[]
+  parkingBookings  ParkingBooking[]
+  meetings         Meeting[]
+  homePlannerTasks HomePlannerTask[]
+  emergencyAlerts  EmergencyAlert[]
 }
 
 model Block {
@@ -161,16 +164,18 @@ model User {
   comments    Comment[]
   tickets     Ticket[]
   payments    Payment[]
-  community       Community        @relation(fields: [communityId], references: [id], onDelete: Cascade)
-  unit            Unit?            @relation(fields: [unitId], references: [id], onDelete: SetNull)
-  visitors        Visitor[]        @relation("UserVisitors")
-  kidPasses       KidPass[]        @relation("UserKidPasses")
-  packages        Packages[]
-  surveyResponses   SurveyResponse[]
-  pollVotes         PollVote[]
-  vehicleRecords    Vehicle[]
-  meetingRsvps      MeetingRsvp[]
-  homePlannerTasks  HomePlannerTask[]
+  community           Community        @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  unit                Unit?            @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  visitors            Visitor[]        @relation("UserVisitors")
+  kidPasses           KidPass[]        @relation("UserKidPasses")
+  packages            Packages[]
+  surveyResponses     SurveyResponse[]
+  pollVotes           PollVote[]
+  vehicleRegistrations Vehicle[]
+  parkingBookings     ParkingBooking[]
+  meetingRsvps        MeetingRsvp[]
+  homePlannerTasks    HomePlannerTask[]
+  emergencyAlerts     EmergencyAlert[]
 
   @@index([communityId])
   @@index([communityId, role])
@@ -627,58 +632,136 @@ model PollVote {
   @@index([userId])
 }
 
-// ─── Meetings (MEETING_ALIGNMENT) ───────────────────────────
+// ─── Vehicle Management ──────────────────────────────────────
 
-enum MeetingStatus {
-  UPCOMING
-  ONGOING
-  CANCELLED
-  COMPLETED
+enum VehicleStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
-enum MeetingRsvpResponse {
+model Vehicle {
+  id              String        @id @default(uuid())
+  plateNumber     String
+  vehicleType     String
+  brand           String?
+  model           String?
+  color           String?
+  status          VehicleStatus @default(PENDING)
+  rejectionReason String?
+  userId          String
+  communityId     String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community       Community     @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([communityId])
+  @@index([userId])
+  @@index([communityId, status])
+}
+
+// ─── Parking ─────────────────────────────────────────────────
+
+enum SpotType {
+  TWO_WHEELER
+  FOUR_WHEELER
+  EV
+}
+
+enum ParkingBookingStatus {
+  ACTIVE
+  CANCELLED
+}
+
+model ParkingSpot {
+  id          String           @id @default(uuid())
+  spotNumber  String
+  spotType    SpotType
+  floor       String?
+  block       String?
+  pricePerDay Float
+  isAvailable Boolean          @default(true)
+  communityId String
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  community   Community        @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  bookings    ParkingBooking[]
+
+  @@index([communityId])
+  @@index([communityId, isAvailable])
+}
+
+model ParkingBooking {
+  id          String               @id @default(uuid())
+  spotId      String
+  userId      String
+  communityId String
+  fromDate    DateTime
+  toDate      DateTime
+  status      ParkingBookingStatus @default(ACTIVE)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  spot        ParkingSpot          @relation(fields: [spotId], references: [id], onDelete: Cascade)
+  user        User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community   Community            @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([communityId])
+  @@index([userId])
+  @@index([spotId])
+}
+
+// ─── Meetings ────────────────────────────────────────────────
+
+enum RsvpResponse {
   GOING
   NOT_GOING
   MAYBE
 }
 
 model Meeting {
-  id          String              @id @default(uuid())
+  id          String        @id @default(uuid())
   title       String
   description String?
   location    String?
+  scheduledAt DateTime
   agenda      String[]
-  startTime   DateTime
-  endTime     DateTime?
-  status      MeetingStatus       @default(UPCOMING)
   communityId String
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
-  community   Community           @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  community   Community     @relation(fields: [communityId], references: [id], onDelete: Cascade)
   rsvps       MeetingRsvp[]
 
   @@index([communityId])
-  @@index([communityId, startTime])
+  @@index([communityId, scheduledAt])
 }
 
 model MeetingRsvp {
-  id        String              @id @default(uuid())
+  id        String       @id @default(uuid())
   meetingId String
   userId    String
-  response  MeetingRsvpResponse
-  createdAt DateTime            @default(now())
-  updatedAt DateTime            @updatedAt
-  meeting   Meeting             @relation(fields: [meetingId], references: [id], onDelete: Cascade)
-  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  response  RsvpResponse
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  meeting   Meeting      @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([meetingId, userId])
   @@index([meetingId])
   @@index([userId])
 }
 
-// ─── Home Planner (HOME_PLANNER) ────────────────────────────
+// ─── Home Planner ────────────────────────────────────────────
 
-enum HomePlannerTaskStatus {
+enum TaskType {
+  MAINTENANCE
+  CONTRACTOR
+  SERVICE
+  CLEANING
+  OTHER
+}
+
+enum TaskStatus {
   PENDING
   IN_PROGRESS
   DONE
@@ -686,20 +769,47 @@ enum HomePlannerTaskStatus {
 }
 
 model HomePlannerTask {
-  id            String                @id @default(uuid())
+  id            String     @id @default(uuid())
   title         String
   description   String?
-  taskType      String                @default("OTHER")
+  type          TaskType
+  status        TaskStatus @default(PENDING)
   scheduledDate DateTime?
-  status        HomePlannerTaskStatus @default(PENDING)
   userId        String
   communityId   String
-  createdAt   DateTime              @default(now())
-  updatedAt   DateTime              @updatedAt
-  user        User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  community   Community             @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community     Community  @relation(fields: [communityId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([communityId])
-  @@index([userId, status])
+  @@index([userId, communityId])
+}
+
+// ─── Emergency / SOS ─────────────────────────────────────────
+
+enum AlertStatus {
+  ACTIVE
+  CANCELLED
+  RESOLVED
+}
+
+model EmergencyAlert {
+  id          String      @id @default(uuid())
+  userId      String
+  communityId String
+  name        String
+  unitNumber  String?
+  blockName   String?
+  status      AlertStatus @default(ACTIVE)
+  createdAt   DateTime    @default(now())
+  cancelledAt DateTime?
+  updatedAt   DateTime    @updatedAt
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community   Community   @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([communityId])
+  @@index([communityId, status])
 }

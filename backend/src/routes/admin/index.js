@@ -2927,25 +2927,26 @@ router.post(
   },
 );
 
-// ─── Vehicle Management ────────────────────────────────────────────
+// ─── Vehicle Management (Admin) ──────────────────────────────
 
-// GET /admin/vehicles?status=PENDING|APPROVED|REJECTED
+// GET /admin/vehicles?communityId&status
 router.get(
   "/vehicles",
   checkFeature("VEHICLE_MANAGEMENT"),
   async (req, res) => {
-    try {
-      const { status } = req.query;
-      const where = { communityId: req.user.communityId };
-      if (status) where.status = status.toUpperCase();
+    const { communityId, status } = req.query;
+    if (!communityId) {
+      return res.status(400).json({ error: "communityId is required" });
+    }
+    const where = { communityId };
+    if (status) where.status = status.toUpperCase();
 
+    try {
       const vehicles = await prisma.vehicle.findMany({
         where,
-        orderBy: { createdAt: "desc" },
         include: {
           user: {
             select: {
-              id: true,
               name: true,
               unit: {
                 select: {
@@ -2956,20 +2957,19 @@ router.get(
             },
           },
         },
+        orderBy: { createdAt: "desc" },
       });
 
       const result = vehicles.map((v) => ({
         ...v,
-        user: v.user
-          ? {
-              ...v.user,
-              unitNumber: v.user.unit?.number ?? null,
-              blockName: v.user.unit?.block?.name ?? null,
-            }
-          : null,
+        user: {
+          name: v.user?.name || "Unknown",
+          unitNumber: v.user?.unit?.number || "N/A",
+          blockName: v.user?.unit?.block?.name || "N/A",
+        },
       }));
 
-      res.json({ vehicles: result });
+      res.json(result);
     } catch (error) {
       console.error("Error fetching vehicles:", error);
       res.status(500).json({ error: "Internal Server Error" });
@@ -2977,7 +2977,7 @@ router.get(
   },
 );
 
-// PATCH /admin/vehicles/:id  — approve or reject a vehicle
+// PATCH /admin/vehicles/:id
 router.patch(
   "/vehicles/:id",
   checkFeature("VEHICLE_MANAGEMENT"),
@@ -2985,58 +2985,20 @@ router.patch(
     const { id } = req.params;
     const { status, rejectionReason } = req.body;
 
-    const allowed = ["APPROVED", "REJECTED"];
-    if (!status || !allowed.includes(status.toUpperCase())) {
+    const validStatuses = ["APPROVED", "REJECTED"];
+    if (!status || !validStatuses.includes(status)) {
       return res
         .status(400)
         .json({ error: "status must be APPROVED or REJECTED" });
     }
 
     try {
-      const vehicle = await prisma.vehicle.findFirst({
-        where: { id, communityId: req.user.communityId },
-      });
-      if (!vehicle) return res.status(404).json({ error: "Vehicle not found" });
-
-      const updateData = { status: status.toUpperCase() };
-      if (status.toUpperCase() === "REJECTED") {
-        updateData.rejectionReason = rejectionReason?.trim() || "Not approved";
+      const data = { status };
+      if (status === "REJECTED" && rejectionReason) {
+        data.rejectionReason = rejectionReason;
       }
-
-      const updated = await prisma.vehicle.update({
-        where: { id },
-        data: updateData,
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              pushToken: true,
-              unit: {
-                select: {
-                  number: true,
-                  block: { select: { name: true } },
-                },
-              },
-            },
-          },
-        },
-      });
-
-      // Push notification to resident
-      if (updated.user?.pushToken) {
-        const isApproved = status.toUpperCase() === "APPROVED";
-        await sendPushNotification(
-          updated.user.pushToken,
-          isApproved ? "🚗 Vehicle Approved" : "❌ Vehicle Rejected",
-          isApproved
-            ? `Your vehicle ${updated.plateNumber} has been approved`
-            : `Your vehicle ${updated.plateNumber} was not approved: ${updateData.rejectionReason}`,
-          { type: "VEHICLE_STATUS", vehicleId: updated.id },
-        );
-      }
-
-      res.json({ vehicle: updated });
+      const vehicle = await prisma.vehicle.update({ where: { id }, data });
+      res.json(vehicle);
     } catch (error) {
       console.error("Error updating vehicle status:", error);
       res.status(500).json({ error: "Internal Server Error" });
@@ -3044,199 +3006,115 @@ router.patch(
   },
 );
 
+// ─── Parking Management (Admin) ──────────────────────────────
+
+// GET /admin/parking/spots?communityId
 router.get(
-  "/meetings/",
-  checkFeature("MEETING_ALIGNMENT"),
+  "/parking/spots",
+  checkFeature("RENT_A_PARKING"),
   async (req, res) => {
+    const { communityId } = req.query;
+    if (!communityId) {
+      return res.status(400).json({ error: "communityId is required" });
+    }
     try {
-      const { communityId, userId } = req.query;
-      if (!communityId) {
-        return res.status(400).json({ error: "communityId is required" });
-      }
-
-      const meetings = await prisma.meeting.findMany({
+      const spots = await prisma.parkingSpot.findMany({
         where: { communityId },
-        orderBy: { startTime: "asc" },
-        include: {
-          rsvps: {
-            select: { userId: true, response: true },
-          },
-        },
+        orderBy: { spotNumber: "asc" },
       });
-
-      const data = meetings.map((m) => {
-        const rsvpCounts = { GOING: 0, NOT_GOING: 0, MAYBE: 0 };
-        let myRsvp = null;
-        for (const r of m.rsvps) {
-          if (rsvpCounts[r.response] !== undefined) rsvpCounts[r.response]++;
-          if (userId && r.userId === userId) myRsvp = r.response;
-        }
-        return {
-          id: m.id,
-          title: m.title,
-          description: m.description,
-          location: m.location,
-          agenda: m.agenda,
-          scheduledAt: m.startTime,
-          startTime: m.startTime,
-          endTime: m.endTime,
-          status: m.status,
-          communityId: m.communityId,
-          createdAt: m.createdAt,
-          updatedAt: m.updatedAt,
-          rsvpCounts,
-          myRsvp,
-        };
-      });
-
-      res.json({ meetings: data });
+      res.json(spots);
     } catch (error) {
-      console.error("Error fetching meetings:", error);
-      res.status(500).json({ error: "Failed to fetch meetings" });
+      console.error("Error fetching parking spots:", error);
+      res.status(500).json({ error: "Internal Server Error" });
     }
   },
 );
 
+// POST /admin/parking/spots
 router.post(
-  "/meetings/",
-  checkFeature("MEETING_ALIGNMENT"),
+  "/parking/spots",
+  checkFeature("RENT_A_PARKING"),
   async (req, res) => {
+    const {
+      spotNumber,
+      spotType,
+      floor,
+      block,
+      pricePerDay,
+      isAvailable,
+      communityId,
+    } = req.body;
+
+    if (!spotNumber || !spotType || !communityId || pricePerDay === undefined) {
+      return res.status(400).json({
+        error: "spotNumber, spotType, pricePerDay and communityId are required",
+      });
+    }
+
+    const validTypes = ["TWO_WHEELER", "FOUR_WHEELER", "EV"];
+    if (!validTypes.includes(spotType)) {
+      return res.status(400).json({ error: `Invalid spotType: ${spotType}` });
+    }
+
     try {
-      if (req.user.role !== "ADMIN") {
-        return res.status(403).json({ error: "Admin only" });
-      }
-      const { communityId, title, description, location, scheduledAt, agenda } =
-        req.body;
-
-      if (!communityId || !title || !scheduledAt) {
-        return res
-          .status(400)
-          .json({ error: "communityId, title, and scheduledAt are required" });
-      }
-
-      const meeting = await prisma.meeting.create({
+      const spot = await prisma.parkingSpot.create({
         data: {
+          spotNumber,
+          spotType,
+          floor,
+          block,
+          pricePerDay: parseFloat(pricePerDay),
+          isAvailable: isAvailable !== undefined ? Boolean(isAvailable) : true,
           communityId,
-          title: title.trim(),
-          description: description?.trim() || null,
-          location: location?.trim() || null,
-          agenda: Array.isArray(agenda) ? agenda : [],
-          startTime: new Date(scheduledAt),
         },
       });
-
-      // Notify all approved residents
-      const residents = await prisma.user.findMany({
-        where: {
-          communityId,
-          role: "RESIDENT",
-          status: "APPROVED",
-          pushToken: { not: null },
-        },
-        select: { pushToken: true },
-      });
-      const tokens = residents.map((r) => r.pushToken).filter(Boolean);
-      if (tokens.length > 0) {
-        await sendBulkPushNotifications(tokens, {
-          title: "New Meeting Scheduled",
-          body: `${title.trim()} — ${new Date(scheduledAt).toLocaleDateString()}`,
-          data: { type: "MEETING_CREATED", meetingId: meeting.id },
-        });
-      }
-
-      res.status(201).json({
-        success: true,
-        data: { ...meeting, scheduledAt: meeting.startTime },
-      });
+      res.status(201).json(spot);
     } catch (error) {
-      console.error("Error creating meeting:", error);
-      res.status(500).json({ error: "Failed to create meeting" });
+      console.error("Error creating parking spot:", error);
+      res.status(500).json({ error: "Internal Server Error" });
     }
   },
 );
 
-// ─── PATCH /meetings/:id ─────────────────────────────────────
+// PATCH /admin/parking/spots/:id
 router.patch(
-  "/meetings/:id",
-  checkFeature("MEETING_ALIGNMENT"),
+  "/parking/spots/:id",
+  checkFeature("RENT_A_PARKING"),
   async (req, res) => {
+    const { id } = req.params;
+    const { isAvailable } = req.body;
+
+    if (isAvailable === undefined) {
+      return res.status(400).json({ error: "isAvailable is required" });
+    }
+
     try {
-      if (req.user.role !== "ADMIN") {
-        return res.status(403).json({ error: "Admin only" });
-      }
-      const { id } = req.params;
-      const { title, description, location, scheduledAt, agenda, status } =
-        req.body;
-
-      const data = {};
-      if (title !== undefined) data.title = title.trim();
-      if (description !== undefined)
-        data.description = description?.trim() || null;
-      if (location !== undefined) data.location = location?.trim() || null;
-      if (scheduledAt !== undefined) data.startTime = new Date(scheduledAt);
-      if (agenda !== undefined)
-        data.agenda = Array.isArray(agenda) ? agenda : [];
-      if (status !== undefined) data.status = status;
-
-      const meeting = await prisma.meeting.update({
+      const spot = await prisma.parkingSpot.update({
         where: { id },
-        data,
+        data: { isAvailable: Boolean(isAvailable) },
       });
-
-      res.json({
-        success: true,
-        data: { ...meeting, scheduledAt: meeting.startTime },
-      });
+      res.json(spot);
     } catch (error) {
-      console.error("Error updating meeting:", error);
-      res.status(500).json({ error: "Failed to update meeting" });
+      console.error("Error updating parking spot:", error);
+      res.status(500).json({ error: "Internal Server Error" });
     }
   },
 );
 
-// ─── DELETE /meetings/:id ────────────────────────────────────
+// DELETE /admin/parking/spots/:id
 router.delete(
-  "/meetings/:id",
-  checkFeature("MEETING_ALIGNMENT"),
+  "/parking/spots/:id",
+  checkFeature("RENT_A_PARKING"),
   async (req, res) => {
+    const { id } = req.params;
     try {
-      if (req.user.role !== "ADMIN") {
-        return res.status(403).json({ error: "Admin only" });
-      }
-      await prisma.meeting.delete({ where: { id: req.params.id } });
+      await prisma.parkingSpot.delete({ where: { id } });
       res.json({ success: true });
     } catch (error) {
-      console.error("Error deleting meeting:", error);
-      res.status(500).json({ error: "Failed to delete meeting" });
+      console.error("Error deleting parking spot:", error);
+      res.status(500).json({ error: "Internal Server Error" });
     }
   },
 );
-
-router.get("/meetings/:id/rsvps", async (req, res) => {
-  try {
-    if (req.user.role !== "ADMIN") {
-      return res.status(403).json({ error: "Admin only" });
-    }
-    const rsvps = await prisma.meetingRsvp.findMany({
-      where: { meetingId: req.params.id },
-      include: {
-        user: { select: { id: true, name: true, email: true, phone: true } },
-      },
-      orderBy: { createdAt: "desc" },
-    });
-
-    const data = rsvps.map((r) => ({
-      id: r.id,
-      response: r.response,
-      createdAt: r.createdAt,
-      user: r.user,
-    }));
-
-    res.json({ rsvps: data });
-  } catch (error) {
-    console.error("Error fetching RSVPs:", error);
-    res.status(500).json({ error: "Failed to fetch RSVPs" });
-  }
-});
 
 export default router;
