@@ -4,7 +4,10 @@ import nodemailer from "nodemailer";
 import prisma from "../../../lib/prisma.js";
 import { authMiddleware } from "../../middleware/auth.js";
 import { checkFeature } from "../../middleware/checkFeature.js";
-import { sendBulkPushNotifications } from "../../../lib/notifications.js";
+import {
+  sendBulkPushNotifications,
+  sendPushNotification,
+} from "../../../lib/notifications.js";
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -298,7 +301,7 @@ router.get(
 );
 
 router.post(
-  "/visitor-creation",
+  "/visitors",
   checkFeature("VISITOR_MANAGEMENT"),
   async (req, res) => {
     try {
@@ -970,30 +973,15 @@ router.get("/profile", async (req, res) => {
 router.patch("/profile", async (req, res) => {
   try {
     const userId = req.user.id;
-    const { name, phone, vehicles } = req.body;
+    const { name, phone } = req.body;
 
     if (!name || typeof name !== "string" || !name.trim()) {
       return res.status(400).json({ error: "name is required" });
     }
 
-    // Validate vehicles if provided
-    if (vehicles !== undefined) {
-      if (!Array.isArray(vehicles)) {
-        return res.status(400).json({ error: "vehicles must be an array" });
-      }
-      if (vehicles.some((v) => typeof v !== "string" || !v.trim())) {
-        return res
-          .status(400)
-          .json({ error: "each vehicle number must be a non-empty string" });
-      }
-    }
-
     const data = {
       name: name.trim(),
       phone: phone !== undefined ? phone?.trim() || null : undefined,
-      ...(vehicles !== undefined && {
-        vehicles: vehicles.map((v) => v.trim().toUpperCase()),
-      }),
     };
 
     const updated = await prisma.user.update({
@@ -1004,7 +992,6 @@ router.patch("/profile", async (req, res) => {
         name: true,
         email: true,
         phone: true,
-        vehicles: true,
       },
     });
 
@@ -1855,6 +1842,314 @@ router.post(
     } catch (error) {
       console.error("Error casting vote:", error);
       res.status(500).json({ success: false, message: "Failed to cast vote" });
+    }
+  },
+);
+
+// ─── Vehicle Management ────────────────────────────────────────────
+
+// GET /resident/vehicles — list user's own vehicles
+router.get(
+  "/vehicles",
+  checkFeature("VEHICLE_MANAGEMENT"),
+  async (req, res) => {
+    try {
+      const vehicles = await prisma.vehicle.findMany({
+        where: { userId: req.user.id },
+        orderBy: { createdAt: "desc" },
+      });
+      res.json({ vehicles });
+    } catch (error) {
+      console.error("Error fetching vehicles:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  },
+);
+
+// POST /resident/vehicles — register a new vehicle (PENDING)
+router.post(
+  "/vehicles",
+  checkFeature("VEHICLE_MANAGEMENT"),
+  async (req, res) => {
+    const { plateNumber, vehicleType, brand, model, color } = req.body;
+
+    if (!plateNumber?.trim()) {
+      return res.status(400).json({ error: "plateNumber is required" });
+    }
+
+    const plate = plateNumber.trim().toUpperCase();
+
+    try {
+      // Prevent duplicate APPROVED plates within the same community
+      const existing = await prisma.vehicle.findFirst({
+        where: {
+          plateNumber: plate,
+          communityId: req.user.communityId,
+          status: "APPROVED",
+        },
+      });
+      if (existing) {
+        return res.status(409).json({
+          error: "A vehicle with this plate number is already registered",
+        });
+      }
+
+      const vehicle = await prisma.vehicle.create({
+        data: {
+          plateNumber: plate,
+          vehicleType: vehicleType ?? "CAR",
+          brand: brand?.trim() || null,
+          model: model?.trim() || null,
+          color: color?.trim() || null,
+          userId: req.user.id,
+          communityId: req.user.communityId,
+        },
+      });
+
+      // Notify all admins in the community
+      const admins = await prisma.user.findMany({
+        where: {
+          communityId: req.user.communityId,
+          role: "ADMIN",
+          status: "APPROVED",
+          pushToken: { not: null },
+        },
+        select: { pushToken: true },
+      });
+
+      if (admins.length > 0) {
+        await Promise.allSettled(
+          admins.map((a) =>
+            sendPushNotification(
+              a.pushToken,
+              "🚗 New Vehicle Request",
+              `${req.user.name} registered ${plate}`,
+              { type: "VEHICLE_REQUEST", vehicleId: vehicle.id },
+            ),
+          ),
+        );
+      }
+
+      res.status(201).json({ vehicle });
+    } catch (error) {
+      console.error("Error creating vehicle:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  },
+);
+
+// DELETE /resident/vehicles/:id — delete a vehicle
+router.delete(
+  "/vehicles/:id",
+  checkFeature("VEHICLE_MANAGEMENT"),
+  async (req, res) => {
+    const { id } = req.params;
+    try {
+      const vehicle = await prisma.vehicle.findFirst({
+        where: { id, userId: req.user.id },
+      });
+      if (!vehicle) return res.status(404).json({ error: "Vehicle not found" });
+
+      await prisma.vehicle.delete({ where: { id } });
+      res.json({ message: "Vehicle removed" });
+    } catch (error) {
+      console.error("Error deleting vehicle:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  },
+);
+
+router.get("/meetings", checkFeature("MEETING_ALIGNMENT"), async (req, res) => {
+  try {
+    const { communityId, userId } = req.query;
+    if (!communityId) {
+      return res.status(400).json({ error: "communityId is required" });
+    }
+
+    const meetings = await prisma.meeting.findMany({
+      where: { communityId },
+      orderBy: { startTime: "asc" },
+      include: {
+        rsvps: {
+          select: { userId: true, response: true },
+        },
+      },
+    });
+
+    const data = meetings.map((m) => {
+      const rsvpCounts = { GOING: 0, NOT_GOING: 0, MAYBE: 0 };
+      let myRsvp = null;
+      for (const r of m.rsvps) {
+        if (rsvpCounts[r.response] !== undefined) rsvpCounts[r.response]++;
+        if (userId && r.userId === userId) myRsvp = r.response;
+      }
+      return {
+        id: m.id,
+        title: m.title,
+        description: m.description,
+        location: m.location,
+        agenda: m.agenda,
+        scheduledAt: m.startTime,
+        startTime: m.startTime,
+        endTime: m.endTime,
+        status: m.status,
+        communityId: m.communityId,
+        createdAt: m.createdAt,
+        updatedAt: m.updatedAt,
+        rsvpCounts,
+        myRsvp,
+      };
+    });
+
+    res.json({ meetings: data });
+  } catch (error) {
+    console.error("Error fetching meetings:", error);
+    res.status(500).json({ error: "Failed to fetch meetings" });
+  }
+});
+
+router.post(
+  "/meetings/:id/rsvp",
+  checkFeature("MEETING_ALIGNMENT"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { response, userId } = req.body;
+      const resolvedUserId = userId || req.user.id;
+
+      const validResponses = ["GOING", "NOT_GOING", "MAYBE"];
+      if (!response || !validResponses.includes(response)) {
+        return res
+          .status(400)
+          .json({ error: "response must be GOING, NOT_GOING, or MAYBE" });
+      }
+
+      const rsvp = await prisma.meetingRsvp.upsert({
+        where: { meetingId_userId: { meetingId: id, userId: resolvedUserId } },
+        update: { response },
+        create: { meetingId: id, userId: resolvedUserId, response },
+      });
+
+      res.json({ success: true, data: rsvp });
+    } catch (error) {
+      console.error("Error saving RSVP:", error);
+      res.status(500).json({ error: "Failed to save RSVP" });
+    }
+  },
+);
+
+router.get("/home-planner", checkFeature("HOME_PLANNER"), async (req, res) => {
+  try {
+    const { communityId, userId } = req.query;
+    const resolvedUserId = userId || req.user.id;
+
+    if (!communityId) {
+      return res.status(400).json({ error: "communityId is required" });
+    }
+
+    const tasks = await prisma.homePlannerTask.findMany({
+      where: { communityId, userId: resolvedUserId },
+      orderBy: { scheduledDate: "asc" },
+    });
+
+    res.json({ tasks });
+  } catch (error) {
+    console.error("Error fetching home planner tasks:", error);
+    res.status(500).json({ error: "Failed to fetch tasks" });
+  }
+});
+
+// ─── POST /home-planner ──────────────────────────────────────
+router.post("/home-planner", checkFeature("HOME_PLANNER"), async (req, res) => {
+  try {
+    const { communityId, userId, title, description, taskType, scheduledDate } =
+      req.body;
+
+    const resolvedUserId = userId || req.user.id;
+
+    if (!communityId || !title) {
+      return res
+        .status(400)
+        .json({ error: "communityId and title are required" });
+    }
+
+    const task = await prisma.homePlannerTask.create({
+      data: {
+        communityId,
+        userId: resolvedUserId,
+        title: title.trim(),
+        description: description?.trim() || null,
+        taskType: taskType || "OTHER",
+        scheduledDate: scheduledDate ? new Date(scheduledDate) : null,
+      },
+    });
+
+    res.status(201).json({ success: true, data: task });
+  } catch (error) {
+    console.error("Error creating home planner task:", error);
+    res.status(500).json({ error: "Failed to create task" });
+  }
+});
+
+// ─── PATCH /home-planner/:id ─────────────────────────────────
+router.patch(
+  "/home-planner/:id",
+  checkFeature("HOME_PLANNER"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { title, description, taskType, scheduledDate, status } = req.body;
+
+      // Ensure the task belongs to the requesting user
+      const existing = await prisma.homePlannerTask.findUnique({
+        where: { id },
+      });
+      if (!existing) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+      if (existing.userId !== req.user.id && req.user.role !== "ADMIN") {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
+      const data = {};
+      if (title !== undefined) data.title = title.trim();
+      if (description !== undefined)
+        data.description = description?.trim() || null;
+      if (taskType !== undefined) data.taskType = taskType;
+      if (scheduledDate !== undefined)
+        data.scheduledDate = scheduledDate ? new Date(scheduledDate) : null;
+      if (status !== undefined) data.status = status;
+
+      const task = await prisma.homePlannerTask.update({ where: { id }, data });
+      res.json({ success: true, data: task });
+    } catch (error) {
+      console.error("Error updating home planner task:", error);
+      res.status(500).json({ error: "Failed to update task" });
+    }
+  },
+);
+
+// ─── DELETE /home-planner/:id ────────────────────────────────
+router.delete(
+  "/home-planner/:id",
+  checkFeature("HOME_PLANNER"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const existing = await prisma.homePlannerTask.findUnique({
+        where: { id },
+      });
+      if (!existing) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+      if (existing.userId !== req.user.id && req.user.role !== "ADMIN") {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+      await prisma.homePlannerTask.delete({ where: { id } });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting home planner task:", error);
+      res.status(500).json({ error: "Failed to delete task" });
     }
   },
 );

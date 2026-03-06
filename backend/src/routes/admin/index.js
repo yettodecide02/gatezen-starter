@@ -544,12 +544,10 @@ router.post(
         );
       }
 
-      res
-        .status(200)
-        .json({
-          message: "Maintenance request updated",
-          ticket: updatedTicket,
-        });
+      res.status(200).json({
+        message: "Maintenance request updated",
+        ticket: updatedTicket,
+      });
     } catch (e) {
       console.error("Error updating maintenance request:", e);
       res.status(500).json({ error: "Internal server error" });

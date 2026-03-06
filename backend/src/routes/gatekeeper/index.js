@@ -1003,49 +1003,50 @@ router.get(
     }
     const q = vehicleNo.trim().toUpperCase();
     try {
-      // Search resident vehicles (vehicles is a String[] — filter in JS)
-      const users = await prisma.user.findMany({
+      // 1. Search new Vehicle model (APPROVED records with rich info)
+      const vehicleRecords = await prisma.vehicle.findMany({
         where: {
           communityId,
-          role: "RESIDENT",
           status: "APPROVED",
-          vehicles: { isEmpty: false },
+          plateNumber: { contains: q, mode: "insensitive" },
         },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          phone: true,
-          vehicles: true,
-          unit: {
+        include: {
+          user: {
             select: {
-              number: true,
-              block: { select: { name: true } },
+              id: true,
+              name: true,
+              email: true,
+              phone: true,
+              unit: {
+                select: {
+                  number: true,
+                  block: { select: { name: true } },
+                },
+              },
             },
           },
         },
+        orderBy: { createdAt: "desc" },
+        take: 20,
       });
 
-      const residentResults = users.flatMap((u) =>
-        u.vehicles
-          .filter((v) => v.toUpperCase().includes(q))
-          .map((v) => ({
-            id: `${u.id}-${v}`,
-            vehicleNo: v,
-            vehicleType: null,
-            vehicleColor: null,
-            vehicleModel: null,
-            ownerType: "RESIDENT",
-            ownerName: u.name,
-            contact: u.phone || null,
-            email: u.email,
-            unitNumber: u.unit?.number || null,
-            blockName: u.unit?.block?.name || null,
-            registeredAt: null,
-          })),
-      );
+      const modelResults = vehicleRecords.map((v) => ({
+        id: v.id,
+        vehicleNo: v.plateNumber,
+        vehicleType: v.vehicleType,
+        vehicleColor: v.color,
+        vehicleModel: v.model,
+        vehicleBrand: v.brand,
+        ownerType: "RESIDENT",
+        ownerName: v.user?.name || null,
+        contact: v.user?.phone || null,
+        email: v.user?.email || null,
+        unitNumber: v.user?.unit?.number || null,
+        blockName: v.user?.unit?.block?.name || null,
+        registeredAt: v.createdAt,
+      }));
 
-      // Search visitor vehicles
+      // 2. Visitor vehicles
       const visitors = await prisma.visitor.findMany({
         where: {
           communityId,
@@ -1068,6 +1069,7 @@ router.get(
         vehicleType: null,
         vehicleColor: null,
         vehicleModel: null,
+        vehicleBrand: null,
         ownerType: "VISITOR",
         ownerName: v.name,
         contact: v.contact,
@@ -1077,7 +1079,7 @@ router.get(
         registeredAt: v.visitDate,
       }));
 
-      const vehicles = [...residentResults, ...visitorResults];
+      const vehicles = [...modelResults, ...visitorResults];
       res.json({ vehicles, count: vehicles.length });
     } catch (error) {
       console.error("Vehicle search error:", error);
@@ -1085,5 +1087,48 @@ router.get(
     }
   },
 );
+
+// GET /gatekeeper/directory — resident list for intercom calls
+router.get("/directory", checkFeature("E_INTERCOM"), async (req, res) => {
+  try {
+    const { communityId } = req.query;
+    if (!communityId) {
+      return res.status(400).json({ error: "communityId is required" });
+    }
+
+    const residents = await prisma.user.findMany({
+      where: {
+        role: "RESIDENT",
+        status: "APPROVED",
+        communityId,
+      },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        unit: {
+          select: {
+            number: true,
+            block: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: { name: "asc" },
+    });
+
+    const data = residents.map((r) => ({
+      id: r.id,
+      name: r.name,
+      phone: r.phone || null,
+      unitNumber: r.unit?.number || null,
+      blockName: r.unit?.block?.name || null,
+    }));
+
+    res.json({ residents: data });
+  } catch (error) {
+    console.error("Error fetching gatekeeper directory:", error);
+    res.status(500).json({ error: "Failed to fetch directory" });
+  }
+});
 
 export default router;
