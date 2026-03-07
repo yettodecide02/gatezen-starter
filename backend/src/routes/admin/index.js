@@ -3117,4 +3117,422 @@ router.delete(
   },
 );
 
+// ── GET /admin/visitors (all visitors, no date filter) ─────────
+router.get(
+  "/visitors",
+  checkFeature("VISITOR_MANAGEMENT"),
+  async (req, res) => {
+    const { communityId } = req.query;
+    if (!communityId) {
+      return res.status(400).json({ error: "communityId is required" });
+    }
+    try {
+      const visitors = await prisma.visitor.findMany({
+        where: { communityId },
+        include: {
+          user: {
+            select: {
+              name: true,
+              id: true,
+              unit: {
+                select: {
+                  id: true,
+                  number: true,
+                  block: { select: { id: true, name: true } },
+                },
+              },
+            },
+          },
+        },
+        orderBy: { visitDate: "desc" },
+      });
+      return res.status(200).json({ visitors });
+    } catch (e) {
+      console.error("Error fetching visitors:", e);
+      res.status(500).json({ error: "Failed to get visitors" });
+    }
+  },
+);
+
+// ── POST /admin/residents/:userId/action (approve / reject) ────
+router.post("/residents/:userId/action", async (req, res) => {
+  const { userId } = req.params;
+  const { action } = req.body;
+
+  if (!action || !["approve", "reject"].includes(action)) {
+    return res
+      .status(400)
+      .json({ error: "action must be 'approve' or 'reject'" });
+  }
+
+  try {
+    const status = action === "approve" ? "APPROVED" : "REJECTED";
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: { status },
+      select: { id: true, name: true, email: true, status: true },
+    });
+
+    const subject =
+      action === "approve"
+        ? "GateZen Account Approved"
+        : "GateZen Account Rejected";
+    const text =
+      action === "approve"
+        ? `Hello ${updatedUser.name},\n\nYour account has been approved. You can now log in to your GateZen account.\n\nThank you,\nGateZen Team`
+        : `Hello ${updatedUser.name},\n\nWe regret to inform you that your account has been rejected. For more information, please contact support.\n\nThank you,\nGateZen Team`;
+
+    await transporter
+      .sendMail({
+        from: process.env.EMAIL_ID,
+        to: updatedUser.email,
+        subject,
+        text,
+      })
+      .catch((err) => console.error("Email send error:", err));
+
+    res.status(200).json({ message: `Resident ${action}d`, user: updatedUser });
+  } catch (e) {
+    console.error("Error performing resident action:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── PATCH /admin/residents/:id ─────────────────────────────────
+router.patch("/residents/:id", async (req, res) => {
+  const { id } = req.params;
+  const { status, unitId } = req.body;
+  try {
+    const data = {};
+    if (status) data.status = status;
+    if (unitId !== undefined) data.unitId = unitId || null;
+
+    const updatedUser = await prisma.user.update({
+      where: { id },
+      data,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        status: true,
+        unitId: true,
+        unit: { select: { id: true, number: true } },
+      },
+    });
+    res.status(200).json({ user: updatedUser });
+  } catch (e) {
+    console.error("Error updating resident:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── PATCH /admin/maintenance/:ticketId ────────────────────────
+router.patch(
+  "/maintenance/:ticketId",
+  checkFeature("HELPDESK"),
+  async (req, res) => {
+    const { ticketId } = req.params;
+    const { status } = req.body;
+
+    const ALLOWED_TRANSITIONS = {
+      SUBMITTED: ["IN_PROGRESS"],
+      IN_PROGRESS: ["RESOLVED"],
+      RESOLVED: ["CLOSED"],
+      CLOSED: [],
+    };
+
+    try {
+      const currentTicket = await prisma.ticket.findUnique({
+        where: { id: ticketId },
+        select: { status: true },
+      });
+      if (!currentTicket)
+        return res.status(404).json({ error: "Ticket not found" });
+
+      if (status) {
+        const allowed = ALLOWED_TRANSITIONS[currentTicket.status] || [];
+        if (!allowed.includes(status)) {
+          return res.status(400).json({
+            error: `Invalid transition: cannot move from ${currentTicket.status} to ${status}`,
+          });
+        }
+      }
+
+      const updatedTicket = await prisma.ticket.update({
+        where: { id: ticketId },
+        data: { ...(status && { status }) },
+        include: {
+          user: { select: { name: true, email: true, pushToken: true } },
+        },
+      });
+
+      if (status && updatedTicket.user?.pushToken) {
+        await sendPushNotification(
+          updatedTicket.user.pushToken,
+          "🔧 Maintenance Update",
+          `Your ticket "${updatedTicket.title}" status changed to ${updatedTicket.status.replace("_", " ")}`,
+          { type: "TICKET_UPDATE", ticketId: updatedTicket.id },
+        );
+      }
+
+      res.status(200).json({ ticket: updatedTicket });
+    } catch (e) {
+      console.error("Error updating maintenance ticket:", e);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+// ── PATCH /admin/bookings/:bookingId ─────────────────────────
+router.patch(
+  "/bookings/:bookingId",
+  checkFeature("AMENITY_BOOKING"),
+  async (req, res) => {
+    const { bookingId } = req.params;
+    try {
+      const booking = await prisma.booking.update({
+        where: { id: bookingId },
+        data: req.body,
+        include: {
+          user: { select: { name: true, email: true } },
+          facility: { select: { name: true } },
+        },
+      });
+      res.status(200).json({ booking });
+    } catch (e) {
+      console.error("Error updating booking:", e);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+// ── Meetings CRUD ─────────────────────────────────────────────
+router.get("/meetings", async (req, res) => {
+  try {
+    const { communityId } = req.query;
+    if (!communityId)
+      return res.status(400).json({ error: "communityId is required" });
+
+    const meetings = await prisma.meeting.findMany({
+      where: { communityId },
+      include: {
+        rsvps: {
+          include: { user: { select: { id: true, name: true } } },
+        },
+        _count: { select: { rsvps: true } },
+      },
+      orderBy: { scheduledAt: "desc" },
+    });
+    res.status(200).json({ meetings });
+  } catch (e) {
+    console.error("Error fetching meetings:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.post("/meetings", async (req, res) => {
+  try {
+    const { title, description, location, scheduledAt, agenda, communityId } =
+      req.body;
+
+    if (!title || !scheduledAt || !communityId) {
+      return res
+        .status(400)
+        .json({ error: "title, scheduledAt, and communityId are required" });
+    }
+
+    const meeting = await prisma.meeting.create({
+      data: {
+        title: title.trim(),
+        description: description?.trim() || null,
+        location: location?.trim() || null,
+        scheduledAt: new Date(scheduledAt),
+        agenda: Array.isArray(agenda) ? agenda : [],
+        communityId,
+      },
+    });
+
+    const residents = await prisma.user.findMany({
+      where: {
+        communityId,
+        role: "RESIDENT",
+        status: "APPROVED",
+        pushToken: { not: null },
+      },
+      select: { pushToken: true },
+    });
+    if (residents.length > 0) {
+      await sendBulkPushNotifications(
+        residents.map((r) => r.pushToken),
+        "📅 New Meeting Scheduled",
+        title,
+        { type: "MEETING", meetingId: meeting.id },
+      );
+    }
+
+    res.status(201).json({ meeting });
+  } catch (e) {
+    console.error("Error creating meeting:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.patch("/meetings/:meetingId", async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+    const { title, description, location, scheduledAt, agenda } = req.body;
+
+    const data = {};
+    if (title) data.title = title.trim();
+    if (description !== undefined)
+      data.description = description?.trim() || null;
+    if (location !== undefined) data.location = location?.trim() || null;
+    if (scheduledAt) data.scheduledAt = new Date(scheduledAt);
+    if (agenda !== undefined) data.agenda = Array.isArray(agenda) ? agenda : [];
+
+    const meeting = await prisma.meeting.update({
+      where: { id: meetingId },
+      data,
+    });
+    res.status(200).json({ meeting });
+  } catch (e) {
+    console.error("Error updating meeting:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.delete("/meetings/:meetingId", async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+    await prisma.meeting.delete({ where: { id: meetingId } });
+    res.status(200).json({ message: "Meeting deleted" });
+  } catch (e) {
+    console.error("Error deleting meeting:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── Overstay Routes ────────────────────────────────────────────
+router.get(
+  "/overstay",
+  checkFeature("VISITOR_MANAGEMENT"),
+  async (req, res) => {
+    try {
+      const { communityId } = req.query;
+      if (!communityId)
+        return res.status(400).json({ error: "communityId is required" });
+
+      const community = await prisma.community.findUnique({
+        where: { id: communityId },
+        select: { overstayLimits: true },
+      });
+
+      const limits = community?.overstayLimits || {};
+      const defaultLimitHours = limits.defaultHours ?? 4;
+      const cutoff = new Date(Date.now() - defaultLimitHours * 60 * 60 * 1000);
+
+      const visitors = await prisma.visitor.findMany({
+        where: {
+          communityId,
+          checkInAt: { lte: cutoff },
+          checkOutAt: null,
+        },
+        include: {
+          user: {
+            select: {
+              name: true,
+              id: true,
+              unit: {
+                select: {
+                  number: true,
+                  block: { select: { name: true } },
+                },
+              },
+            },
+          },
+        },
+        orderBy: { checkInAt: "asc" },
+      });
+
+      res.status(200).json({ visitors });
+    } catch (e) {
+      console.error("Error fetching overstay visitors:", e);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+router.get("/overstay-settings", async (req, res) => {
+  try {
+    const { communityId } = req.query;
+    if (!communityId)
+      return res.status(400).json({ error: "communityId is required" });
+
+    const community = await prisma.community.findUnique({
+      where: { id: communityId },
+      select: { overstayLimits: true },
+    });
+    if (!community)
+      return res.status(404).json({ error: "Community not found" });
+
+    res.status(200).json({ settings: community.overstayLimits || {} });
+  } catch (e) {
+    console.error("Error fetching overstay settings:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.patch("/overstay-settings", async (req, res) => {
+  try {
+    const { communityId, ...settings } = req.body;
+    if (!communityId)
+      return res.status(400).json({ error: "communityId is required" });
+
+    const community = await prisma.community.findUnique({
+      where: { id: communityId },
+      select: { overstayLimits: true },
+    });
+    if (!community)
+      return res.status(404).json({ error: "Community not found" });
+
+    const updated = await prisma.community.update({
+      where: { id: communityId },
+      data: {
+        overstayLimits: { ...(community.overstayLimits || {}), ...settings },
+      },
+    });
+
+    res.status(200).json({ settings: updated.overstayLimits });
+  } catch (e) {
+    console.error("Error updating overstay settings:", e);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.post(
+  "/overstay/:visitorId/dismiss",
+  checkFeature("VISITOR_MANAGEMENT"),
+  async (req, res) => {
+    try {
+      const { visitorId } = req.params;
+      const visitor = await prisma.visitor.findUnique({
+        where: { id: visitorId },
+      });
+      if (!visitor) return res.status(404).json({ error: "Visitor not found" });
+
+      const updated = await prisma.visitor.update({
+        where: { id: visitorId },
+        data: { checkOutAt: new Date() },
+      });
+
+      res
+        .status(200)
+        .json({ message: "Overstay alert dismissed", visitor: updated });
+    } catch (e) {
+      console.error("Error dismissing overstay alert:", e);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
 export default router;

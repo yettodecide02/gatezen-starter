@@ -758,6 +758,80 @@ router.post(
   },
 );
 
+router.patch(
+  "/packages/:id",
+  checkFeature("DELIVERY_MANAGEMENT"),
+  async (req, res) => {
+    const { id } = req.params;
+    const { status, userId, name, image } = req.body;
+
+    if (!status && (userId || name || image !== undefined)) {
+      try {
+        const updateData = {};
+        if (userId) updateData.userId = userId;
+        if (name) updateData.name = name;
+        if (image) updateData.image = image;
+
+        const updated = await prisma.packages.update({
+          where: { id },
+          data: updateData,
+        });
+        return res.status(200).json({ status: "success", data: updated });
+      } catch (e) {
+        console.error(e);
+        return res.status(400).json({ error: e.message });
+      }
+    }
+
+    if (!status) return res.status(400).json({ error: "status is required" });
+
+    const STATUS_MAP = { pending: "PENDING", collected: "PICKED" };
+    const dbStatus = STATUS_MAP[status?.toLowerCase()];
+    if (!dbStatus)
+      return res.status(400).json({ error: `Invalid status: ${status}` });
+
+    try {
+      const updated = await prisma.packages.update({
+        where: { id },
+        data: { status: dbStatus },
+        select: {
+          image: true,
+          name: true,
+          user: { select: { name: true, email: true } },
+        },
+      });
+
+      if (dbStatus === "PICKED") {
+        try {
+          const base64Data = updated.image.includes("base64,")
+            ? updated.image.split("base64,")[1]
+            : updated.image;
+          await transporter.sendMail({
+            from: process.env.EMAIL_ID,
+            to: updated.user.email,
+            subject: `Your ${updated.name} package has been picked up`,
+            text: `Your ${updated.name} package has been collected from the gate.`,
+            attachments: [
+              {
+                filename: "package.jpg",
+                content: base64Data,
+                encoding: "base64",
+              },
+            ],
+          });
+        } catch (emailErr) {
+          console.error("Failed to send package email:", emailErr);
+        }
+      }
+
+      res.status(200).json({ status: "success", data: updated });
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ error: e.message });
+    }
+  },
+);
+
 router.put(
   "/packages/:id",
   checkFeature("DELIVERY_MANAGEMENT"),
@@ -1087,6 +1161,39 @@ router.get(
     }
   },
 );
+
+// GET /gatekeeper/profile
+router.get("/profile", async (req, res) => {
+  try {
+    const userId = req.query.userId || req.user.id;
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        status: true,
+        phone: true,
+        communityId: true,
+        createdAt: true,
+        community: {
+          select: { id: true, name: true, address: true },
+        },
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.status(200).json({ data: user });
+  } catch (error) {
+    console.error("Error fetching gatekeeper profile:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
 
 // GET /gatekeeper/directory — resident list for intercom calls
 router.get("/directory", checkFeature("E_INTERCOM"), async (req, res) => {

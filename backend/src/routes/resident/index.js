@@ -549,10 +549,39 @@ function overlaps(aStart, aEnd, bStart, bEnd) {
   return aStart < bEnd && bStart < aEnd;
 }
 
-// GET /bookings?facilityId=&date=YYYY-MM-DD
+// GET /bookings?facilityId=&date=YYYY-MM-DD  (facility availability)
+// GET /bookings?userId=&communityId=          (resident's own bookings)
 router.get("/bookings", checkFeature("AMENITY_BOOKING"), async (req, res) => {
   try {
-    const { facilityId, date } = req.query;
+    const { facilityId, date, userId, communityId } = req.query;
+
+    // ── Resident's own bookings ──────────────────────────────
+    if (!facilityId && !date) {
+      if (!userId) {
+        return res
+          .status(400)
+          .json({ error: "facilityId+date or userId is required" });
+      }
+      const where = { userId };
+      if (communityId) where.communityId = communityId;
+
+      const bookings = await prisma.booking.findMany({
+        where,
+        include: {
+          facility: { select: { id: true, name: true, facilityType: true } },
+        },
+        orderBy: { startsAt: "desc" },
+      });
+
+      return res.json({
+        bookings: bookings.map((b) => ({
+          ...b,
+          status: b.status === "CANCELLED" ? "cancelled" : "confirmed",
+        })),
+      });
+    }
+
+    // ── Facility availability for a date ─────────────────────
     if (!facilityId || !date) {
       return res
         .status(400)
@@ -1968,7 +1997,7 @@ router.get("/meetings", checkFeature("MEETING_ALIGNMENT"), async (req, res) => {
 
     const meetings = await prisma.meeting.findMany({
       where: { communityId },
-      orderBy: { startTime: "asc" },
+      orderBy: { scheduledAt: "asc" },
       include: {
         rsvps: {
           select: { userId: true, response: true },
@@ -1989,10 +2018,7 @@ router.get("/meetings", checkFeature("MEETING_ALIGNMENT"), async (req, res) => {
         description: m.description,
         location: m.location,
         agenda: m.agenda,
-        scheduledAt: m.startTime,
-        startTime: m.startTime,
-        endTime: m.endTime,
-        status: m.status,
+        scheduledAt: m.scheduledAt,
         communityId: m.communityId,
         createdAt: m.createdAt,
         updatedAt: m.updatedAt,
@@ -2150,6 +2176,372 @@ router.delete(
     } catch (error) {
       console.error("Error deleting home planner task:", error);
       res.status(500).json({ error: "Failed to delete task" });
+    }
+  },
+);
+
+// ── Parking ────────────────────────────────────────────────────
+
+// GET /resident/parking — available spots (simple alias)
+router.get("/parking", checkFeature("RENT_A_PARKING"), async (req, res) => {
+  try {
+    const { communityId } = req.query;
+    if (!communityId)
+      return res.status(400).json({ error: "communityId is required" });
+
+    const spots = await prisma.parkingSpot.findMany({
+      where: { communityId, isAvailable: true },
+      orderBy: { spotNumber: "asc" },
+    });
+    res.json({ spots });
+  } catch (error) {
+    console.error("Error fetching parking:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+// GET /resident/parking/spots
+router.get(
+  "/parking/spots",
+  checkFeature("RENT_A_PARKING"),
+  async (req, res) => {
+    try {
+      const { communityId } = req.query;
+      if (!communityId)
+        return res.status(400).json({ error: "communityId is required" });
+
+      const spots = await prisma.parkingSpot.findMany({
+        where: { communityId },
+        orderBy: { spotNumber: "asc" },
+      });
+      res.json({ spots });
+    } catch (error) {
+      console.error("Error fetching parking spots:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  },
+);
+
+// GET /resident/parking/bookings
+router.get(
+  "/parking/bookings",
+  checkFeature("RENT_A_PARKING"),
+  async (req, res) => {
+    try {
+      const { communityId, userId } = req.query;
+      if (!communityId || !userId)
+        return res
+          .status(400)
+          .json({ error: "communityId and userId are required" });
+
+      const bookings = await prisma.parkingBooking.findMany({
+        where: { communityId, userId },
+        include: {
+          spot: {
+            select: {
+              spotNumber: true,
+              spotType: true,
+              floor: true,
+              block: true,
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      res.json({ bookings });
+    } catch (error) {
+      console.error("Error fetching parking bookings:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  },
+);
+
+// POST /resident/parking/bookings
+router.post(
+  "/parking/bookings",
+  checkFeature("RENT_A_PARKING"),
+  async (req, res) => {
+    try {
+      const { spotId, userId, communityId, fromDate, toDate } = req.body;
+      if (!spotId || !userId || !communityId || !fromDate || !toDate) {
+        return res
+          .status(400)
+          .json({
+            error: "spotId, userId, communityId, fromDate, toDate are required",
+          });
+      }
+
+      const spot = await prisma.parkingSpot.findFirst({
+        where: { id: spotId, communityId, isAvailable: true },
+      });
+      if (!spot)
+        return res
+          .status(404)
+          .json({ error: "Parking spot not found or unavailable" });
+
+      const booking = await prisma.parkingBooking.create({
+        data: {
+          spotId,
+          userId,
+          communityId,
+          fromDate: new Date(fromDate),
+          toDate: new Date(toDate),
+          status: "ACTIVE",
+        },
+        include: {
+          spot: { select: { spotNumber: true, spotType: true } },
+        },
+      });
+
+      // Mark spot unavailable
+      await prisma.parkingSpot.update({
+        where: { id: spotId },
+        data: { isAvailable: false },
+      });
+
+      res.status(201).json({ booking });
+    } catch (error) {
+      console.error("Error booking parking spot:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  },
+);
+
+// PATCH /resident/parking/bookings/:id/cancel
+router.patch(
+  "/parking/bookings/:id/cancel",
+  checkFeature("RENT_A_PARKING"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const booking = await prisma.parkingBooking.findUnique({ where: { id } });
+      if (!booking)
+        return res.status(404).json({ error: "Parking booking not found" });
+      if (booking.userId !== req.user.id)
+        return res.status(403).json({ error: "Forbidden" });
+
+      const updated = await prisma.parkingBooking.update({
+        where: { id },
+        data: { status: "CANCELLED" },
+      });
+
+      // Mark spot available again
+      await prisma.parkingSpot.update({
+        where: { id: booking.spotId },
+        data: { isAvailable: true },
+      });
+
+      res.json({ booking: updated });
+    } catch (error) {
+      console.error("Error cancelling parking booking:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  },
+);
+
+// ── Overstay (resident view of their visitors) ─────────────────
+router.get(
+  "/overstay",
+  checkFeature("VISITOR_MANAGEMENT"),
+  async (req, res) => {
+    try {
+      const { communityId } = req.query;
+      if (!communityId)
+        return res.status(400).json({ error: "communityId is required" });
+
+      const community = await prisma.community.findUnique({
+        where: { id: communityId },
+        select: { overstayLimits: true },
+      });
+
+      const defaultLimitHours = community?.overstayLimits?.defaultHours ?? 4;
+      const cutoff = new Date(Date.now() - defaultLimitHours * 60 * 60 * 1000);
+
+      const visitors = await prisma.visitor.findMany({
+        where: {
+          communityId,
+          userId: req.user.id,
+          checkInAt: { lte: cutoff },
+          checkOutAt: null,
+        },
+        orderBy: { checkInAt: "asc" },
+      });
+
+      res.json({ visitors });
+    } catch (error) {
+      console.error("Error fetching overstay:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  },
+);
+
+// ── Notice board mutations (resident) ──────────────────────────
+router.post("/notice-board", checkFeature("NOTICE_BOARD"), async (req, res) => {
+  try {
+    const { title, content, category, isPinned } = req.body;
+    if (!title || !content) {
+      return res.status(400).json({ error: "title and content are required" });
+    }
+
+    const notice = await prisma.notice.create({
+      data: {
+        title: title.trim(),
+        content: content.trim(),
+        category: category?.trim() || "General",
+        isPinned: isPinned || false,
+        communityId: req.user.communityId,
+      },
+    });
+
+    res.status(201).json({ success: true, data: notice });
+  } catch (error) {
+    console.error("Error creating notice:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to create notice" });
+  }
+});
+
+router.delete(
+  "/notice-board/:id",
+  checkFeature("NOTICE_BOARD"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const existing = await prisma.notice.findFirst({
+        where: { id, communityId: req.user.communityId },
+      });
+      if (!existing)
+        return res
+          .status(404)
+          .json({ success: false, message: "Notice not found" });
+
+      await prisma.notice.delete({ where: { id } });
+      res.json({ success: true, message: "Notice deleted" });
+    } catch (error) {
+      console.error("Error deleting notice:", error);
+      res
+        .status(500)
+        .json({ success: false, message: "Failed to delete notice" });
+    }
+  },
+);
+
+// ── Survey mutations (resident — for admin-level residents) ────
+router.post("/surveys", checkFeature("SURVEYS"), async (req, res) => {
+  try {
+    const { title, description, startDate, endDate, questions } = req.body;
+    if (!title || !endDate || !questions || !questions.length) {
+      return res.status(400).json({
+        success: false,
+        message: "title, endDate, and at least one question are required",
+      });
+    }
+
+    const survey = await prisma.survey.create({
+      data: {
+        title: title.trim(),
+        description: description?.trim() || null,
+        startDate: startDate ? new Date(startDate) : new Date(),
+        endDate: new Date(endDate),
+        communityId: req.user.communityId,
+        questions: {
+          create: questions.map((q) => ({
+            question: q.question.trim(),
+            type: q.type,
+            options: q.options || null,
+          })),
+        },
+      },
+      include: { questions: true },
+    });
+
+    res.status(201).json({ success: true, data: survey });
+  } catch (error) {
+    console.error("Error creating survey:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to create survey" });
+  }
+});
+
+router.delete("/surveys/:id", checkFeature("SURVEYS"), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const existing = await prisma.survey.findFirst({
+      where: { id, communityId: req.user.communityId },
+    });
+    if (!existing)
+      return res
+        .status(404)
+        .json({ success: false, message: "Survey not found" });
+
+    await prisma.survey.delete({ where: { id } });
+    res.json({ success: true, message: "Survey deleted" });
+  } catch (error) {
+    console.error("Error deleting survey:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to delete survey" });
+  }
+});
+
+// ── Poll mutations (resident) ──────────────────────────────────
+router.post("/polls", checkFeature("ELECTION_POLLS"), async (req, res) => {
+  try {
+    const { title, description, startDate, endDate, candidates } = req.body;
+    if (!title || !endDate || !candidates || candidates.length < 2) {
+      return res.status(400).json({
+        success: false,
+        message: "title, endDate, and at least two candidates are required",
+      });
+    }
+
+    const poll = await prisma.poll.create({
+      data: {
+        title: title.trim(),
+        description: description?.trim() || null,
+        startDate: startDate ? new Date(startDate) : new Date(),
+        endDate: new Date(endDate),
+        communityId: req.user.communityId,
+        candidates: {
+          create: candidates.map((c) => ({
+            name: c.name.trim(),
+            description: c.description?.trim() || null,
+          })),
+        },
+      },
+      include: { candidates: true },
+    });
+
+    res.status(201).json({ success: true, data: poll });
+  } catch (error) {
+    console.error("Error creating poll:", error);
+    res.status(500).json({ success: false, message: "Failed to create poll" });
+  }
+});
+
+router.delete(
+  "/polls/:id",
+  checkFeature("ELECTION_POLLS"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const existing = await prisma.poll.findFirst({
+        where: { id, communityId: req.user.communityId },
+      });
+      if (!existing)
+        return res
+          .status(404)
+          .json({ success: false, message: "Poll not found" });
+
+      await prisma.poll.delete({ where: { id } });
+      res.json({ success: true, message: "Poll deleted" });
+    } catch (error) {
+      console.error("Error deleting poll:", error);
+      res
+        .status(500)
+        .json({ success: false, message: "Failed to delete poll" });
     }
   },
 );
