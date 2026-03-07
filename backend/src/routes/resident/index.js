@@ -342,12 +342,14 @@ router.post(
 
       const visitorData = {
         name,
-        contact,
+        contact: contact ?? "",
         vehicleNo,
         visitorType: actualVisitorType,
         visitDate: visitDate ? new Date(visitDate) : new Date(),
-        communityId: String(communityId),
-        userId: String(actualUserId),
+        community: { connect: { id: String(communityId) } },
+        ...(actualUserId
+          ? { user: { connect: { id: String(actualUserId) } } }
+          : {}),
       };
 
       const visitor = await prisma.visitor.create({
@@ -2078,7 +2080,7 @@ router.get("/home-planner", checkFeature("HOME_PLANNER"), async (req, res) => {
       orderBy: { scheduledDate: "asc" },
     });
 
-    res.json({ tasks });
+    res.json({ tasks: tasks.map((t) => ({ ...t, taskType: t.type })) });
   } catch (error) {
     console.error("Error fetching home planner tasks:", error);
     res.status(500).json({ error: "Failed to fetch tasks" });
@@ -2105,12 +2107,14 @@ router.post("/home-planner", checkFeature("HOME_PLANNER"), async (req, res) => {
         userId: resolvedUserId,
         title: title.trim(),
         description: description?.trim() || null,
-        taskType: taskType || "OTHER",
+        type: taskType || "OTHER",
         scheduledDate: scheduledDate ? new Date(scheduledDate) : null,
       },
     });
 
-    res.status(201).json({ success: true, data: task });
+    res
+      .status(201)
+      .json({ success: true, data: { ...task, taskType: task.type } });
   } catch (error) {
     console.error("Error creating home planner task:", error);
     res.status(500).json({ error: "Failed to create task" });
@@ -2141,13 +2145,13 @@ router.patch(
       if (title !== undefined) data.title = title.trim();
       if (description !== undefined)
         data.description = description?.trim() || null;
-      if (taskType !== undefined) data.taskType = taskType;
+      if (taskType !== undefined) data.type = taskType;
       if (scheduledDate !== undefined)
         data.scheduledDate = scheduledDate ? new Date(scheduledDate) : null;
       if (status !== undefined) data.status = status;
 
       const task = await prisma.homePlannerTask.update({ where: { id }, data });
-      res.json({ success: true, data: task });
+      res.json({ success: true, data: { ...task, taskType: task.type } });
     } catch (error) {
       console.error("Error updating home planner task:", error);
       res.status(500).json({ error: "Failed to update task" });
@@ -2264,11 +2268,9 @@ router.post(
     try {
       const { spotId, userId, communityId, fromDate, toDate } = req.body;
       if (!spotId || !userId || !communityId || !fromDate || !toDate) {
-        return res
-          .status(400)
-          .json({
-            error: "spotId, userId, communityId, fromDate, toDate are required",
-          });
+        return res.status(400).json({
+          error: "spotId, userId, communityId, fromDate, toDate are required",
+        });
       }
 
       const spot = await prisma.parkingSpot.findFirst({
