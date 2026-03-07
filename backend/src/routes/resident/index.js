@@ -915,7 +915,7 @@ router.get("/profile", async (req, res) => {
         name: true,
         email: true,
         phone: true,
-        vehicles: true,
+        vehicleRegistrations: true,
         role: true,
         status: true,
         communityId: true,
