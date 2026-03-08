@@ -18,7 +18,7 @@ export async function sendPushNotification(pushToken, title, body, data = {}) {
   const isCall = data?.type === "INTERCOM_CALL";
 
   try {
-    const ticket = await expo.sendPushNotificationsAsync([
+    const tickets = await expo.sendPushNotificationsAsync([
       {
         to: pushToken,
         sound: "default",
@@ -30,9 +30,26 @@ export async function sendPushNotification(pushToken, title, body, data = {}) {
         ttl: isCall ? 30 : 3600,
       },
     ]);
-    console.log(ticket, pushToken);
 
-    return ticket;
+    // Inspect the ticket immediately — status "error" means Expo could not
+    // forward to FCM. Most common cause: FCM v1 credentials not uploaded to
+    // the Expo project. Fix: `npx eas credentials -p android` → Upload FCM v1 key.
+    for (const ticket of tickets) {
+      if (ticket.status === "error") {
+        console.error(
+          "[Push] Expo ticket error:",
+          ticket.message,
+          ticket.details,
+        );
+        if (ticket.details?.error === "DeviceNotRegistered") {
+          console.warn("[Push] Stale token — should clear from DB:", pushToken);
+        }
+      } else {
+        console.log("[Push] Ticket OK:", ticket.id ?? ticket.status, pushToken);
+      }
+    }
+
+    return tickets;
   } catch (error) {
     console.error("Push notification error:", error);
   }
