@@ -16,6 +16,11 @@ router.get("/gatekeeper", async (req, res) => {
     return res.status(400).json({ error: "communityId is required" });
   }
 
+  // Only allow users to look up gatekeepers in their own community
+  if (communityId !== req.user.communityId) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
   try {
     const gatekeeper = await prisma.user.findFirst({
       where: {
@@ -45,15 +50,10 @@ router.get("/gatekeeper", async (req, res) => {
 // Sends a push notification to the call receiver so they get an alert
 // when their app is in the background or killed.
 router.post("/notify", async (req, res) => {
-  const {
-    receiverId,
-    callerId,
-    callerName,
-    callId,
-    callType,
-    callerUnit,
-    callerBlock,
-  } = req.body;
+  const { receiverId, callerName, callId, callType, callerUnit, callerBlock } =
+    req.body;
+  // Always use the authenticated user as the caller — never trust callerId from the body
+  const callerId = req.user.id;
 
   if (!receiverId || !callerName || !callId) {
     return res
@@ -64,8 +64,16 @@ router.post("/notify", async (req, res) => {
   try {
     const receiver = await prisma.user.findUnique({
       where: { id: receiverId },
-      select: { pushToken: true },
+      select: { pushToken: true, communityId: true },
     });
+
+    // Prevent cross-community push notifications
+    if (
+      receiver?.communityId &&
+      receiver.communityId !== req.user.communityId
+    ) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
 
     if (!receiver?.pushToken) {
       return res.json({ success: false, reason: "No push token registered" });
