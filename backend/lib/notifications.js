@@ -12,6 +12,11 @@ const expo = new Expo();
 export async function sendPushNotification(pushToken, title, body, data = {}) {
   if (!pushToken || !Expo.isExpoPushToken(pushToken)) return;
 
+  // Intercom call notifications must arrive immediately even in doze/background.
+  // priority:"high" maps to FCM high-priority (wakes the device).
+  // ttl:0 means discard if not delivered instantly (stale call alerts are useless).
+  const isCall = data?.type === "INTERCOM_CALL";
+
   try {
     const ticket = await expo.sendPushNotificationsAsync([
       {
@@ -20,10 +25,13 @@ export async function sendPushNotification(pushToken, title, body, data = {}) {
         title,
         body,
         data,
+        channelId: "default",
+        priority: isCall ? "high" : "normal",
+        ttl: isCall ? 30 : 3600,
       },
     ]);
     console.log(ticket, pushToken);
-    
+
     return ticket;
   } catch (error) {
     console.error("Push notification error:", error);
@@ -52,15 +60,15 @@ export async function sendBulkPushNotifications(
     title,
     body,
     data,
+    channelId: "default",
   }));
   console.log(validTokens);
-  
+
   const chunks = expo.chunkPushNotifications(messages);
   for (const chunk of chunks) {
     try {
       await expo.sendPushNotificationsAsync(chunk);
       console.log(messages);
-      
     } catch (error) {
       console.error("Bulk push notification error:", error);
     }
