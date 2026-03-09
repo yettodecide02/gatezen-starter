@@ -1,6 +1,9 @@
 import express from "express";
 import prisma from "../../../lib/prisma.js";
-import { sendPushNotification } from "../../../lib/notifications.js";
+import {
+  sendPushNotification,
+  checkPendingReceipts,
+} from "../../../lib/notifications.js";
 
 const router = express.Router();
 
@@ -58,6 +61,32 @@ router.get("/booking-reminder", async (req, res) => {
     return res.status(200).json({ ok: true, sent });
   } catch (e) {
     console.error("Booking reminder cron error:", e);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+/**
+ * POST /cron/check-receipts
+ * Checks Expo push receipts for all pending ticket IDs and auto-clears
+ * DeviceNotRegistered tokens from the DB.
+ * Call this ~60-120 seconds after any notification send (e.g. every 2 minutes).
+ */
+router.post("/check-receipts", async (req, res) => {
+  const authHeader = req.headers["authorization"];
+  const bearerSecret = authHeader?.startsWith("Bearer ")
+    ? authHeader.slice(7)
+    : null;
+  const secret =
+    bearerSecret || req.headers["x-cron-secret"] || req.query.secret;
+  if (secret !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  try {
+    const result = await checkPendingReceipts();
+    return res.status(200).json({ ok: true, ...result });
+  } catch (e) {
+    console.error("check-receipts cron error:", e);
     return res.status(500).json({ error: "Internal server error" });
   }
 });
