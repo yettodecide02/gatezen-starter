@@ -101,4 +101,52 @@ router.post("/notify", async (req, res) => {
   }
 });
 
+// POST /intercom/notify-cancel
+// Push a "call cancelled" notification to the receiver so they can clear
+// the incoming-call notification from their tray when the app is backgrounded.
+router.post("/notify-cancel", async (req, res) => {
+  const { receiverId, callId, callerName } = req.body;
+  const callerId = req.user.id;
+
+  if (!receiverId || !callId) {
+    return res
+      .status(400)
+      .json({ error: "receiverId and callId are required" });
+  }
+
+  try {
+    const receiver = await prisma.user.findUnique({
+      where: { id: receiverId },
+      select: { pushToken: true, communityId: true },
+    });
+
+    if (
+      receiver?.communityId &&
+      receiver.communityId !== req.user.communityId
+    ) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    if (!receiver?.pushToken) {
+      return res.json({ success: false, reason: "No push token registered" });
+    }
+
+    await sendPushNotification(
+      receiver.pushToken,
+      "Missed Call",
+      `${callerName ?? "Someone"} cancelled the call`,
+      {
+        type: "INTERCOM_CALL_CANCELLED",
+        callId,
+        callerId,
+      },
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error sending cancel notification:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 export default router;

@@ -297,7 +297,11 @@ router.get("/existing-user", async (req, res) => {
     if (existingUser) {
       const community = await prisma.community.findUnique({
         where: { id: existingUser.communityId },
-        select: { id: true, name: true },
+        select: {
+          id: true,
+          name: true,
+          plan: { select: { id: true, name: true, features: true } },
+        },
       });
       const jwttoken = jwt.sign(
         { userId: existingUser.id },
@@ -309,6 +313,10 @@ router.get("/existing-user", async (req, res) => {
         communityName: community?.name,
         unitNumber: existingUser.unit?.number,
         blockName: existingUser.unit?.block?.name,
+        enabledFeatures: community?.plan?.features ?? [],
+        plan: community?.plan
+          ? { id: community.plan.id, name: community.plan.name }
+          : null,
       };
       return res.status(200).json({ exists: true, user: data, jwttoken });
     }
