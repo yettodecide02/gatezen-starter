@@ -34,7 +34,7 @@ const transporter = nodemailer.createTransport({
 
 router.get("/dashboard", async (req, res) => {
   try {
-    const { communityId } = req.query;
+    const communityId = req.user.communityId;
     const community = await prisma.community.findUnique({
       where: { id: communityId },
       include: {
@@ -92,11 +92,7 @@ router.get("/dashboard", async (req, res) => {
 
 router.get("/dashboard-stats", async (req, res) => {
   try {
-    const { communityId } = req.query;
-
-    if (!communityId) {
-      return res.status(400).json({ error: "Community ID is required" });
-    }
+    const communityId = req.user.communityId;
 
     const community = await prisma.community.findUnique({
       where: { id: communityId },
@@ -234,7 +230,7 @@ router.get("/dashboard-stats", async (req, res) => {
 // Resident management routes
 router.get("/resident-requests", async (req, res) => {
   try {
-    const { communityId } = req.query;
+    const communityId = req.user.communityId;
     const community = await prisma.community.findUnique({
       where: { id: communityId },
     });
@@ -302,6 +298,16 @@ router.post("/approve-resident", async (req, res) => {
   const { userId } = req.body;
 
   try {
+    const targetUser = await prisma.user.findFirst({
+      where: { id: userId, communityId: req.user.communityId },
+      select: { id: true },
+    });
+    if (!targetUser) {
+      return res
+        .status(404)
+        .json({ error: "Resident not found in your community" });
+    }
+
     const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: { status: "APPROVED" },
@@ -326,6 +332,16 @@ router.post("/reject-resident", async (req, res) => {
   const { userId } = req.body;
 
   try {
+    const targetUser = await prisma.user.findFirst({
+      where: { id: userId, communityId: req.user.communityId },
+      select: { id: true },
+    });
+    if (!targetUser) {
+      return res
+        .status(404)
+        .json({ error: "Resident not found in your community" });
+    }
+
     const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: { status: "REJECTED" },
@@ -348,7 +364,7 @@ router.post("/reject-resident", async (req, res) => {
 
 router.get("/residents", async (req, res) => {
   try {
-    const { communityId } = req.query;
+    const communityId = req.user.communityId;
     const community = await prisma.community.findUnique({
       where: { id: communityId },
     });
@@ -418,7 +434,7 @@ router.get("/residents", async (req, res) => {
 // Bookings management
 router.get("/bookings", checkFeature("AMENITY_BOOKING"), async (req, res) => {
   try {
-    const { communityId } = req.query;
+    const communityId = req.user.communityId;
     const community = await prisma.community.findUnique({
       where: { id: communityId },
     });
@@ -448,7 +464,7 @@ router.get("/bookings", checkFeature("AMENITY_BOOKING"), async (req, res) => {
 // Maintenance management
 router.get("/maintenance", checkFeature("HELPDESK"), async (req, res) => {
   try {
-    const { communityId } = req.query;
+    const communityId = req.user.communityId;
     const community = await prisma.community.findUnique({
       where: { id: communityId },
     });
@@ -561,7 +577,7 @@ router.get(
   checkFeature("COMMUNICATION"),
   async (req, res) => {
     try {
-      const { communityId } = req.query;
+      const communityId = req.user.communityId;
       const community = await prisma.community.findUnique({
         where: { id: communityId },
       });
@@ -585,16 +601,13 @@ router.post(
   "/create-announcement",
   checkFeature("COMMUNICATION"),
   async (req, res) => {
-    const { title, content, communityId } = req.body;
-    const { userId } = req.user;
+    const { title, content } = req.body;
+    const communityId = req.user.communityId;
+    const userId = req.user.id;
 
     // Validate required fields
     if (!title || !content) {
       return res.status(400).json({ error: "Title and content are required" });
-    }
-
-    if (!communityId) {
-      return res.status(400).json({ error: "Community ID is required" });
     }
 
     try {
@@ -646,8 +659,17 @@ router.delete(
     const { id } = req.params;
 
     try {
+      const existing = await prisma.announcement.findFirst({
+        where: { id, communityId: req.user.communityId },
+      });
+      if (!existing) {
+        return res
+          .status(404)
+          .json({ error: "Announcement not found in your community" });
+      }
+
       await prisma.announcement.delete({
-        where: { id: id },
+        where: { id },
       });
 
       res.status(200).json({ message: "Announcement deleted successfully" });
@@ -663,10 +685,7 @@ router.delete(
 // Get all blocks for a community
 router.get("/blocks", async (req, res) => {
   try {
-    const { communityId } = req.query;
-    if (!communityId) {
-      return res.status(400).json({ error: "Community ID is required" });
-    }
+    const communityId = req.user.communityId;
 
     const blocks = await prisma.block.findMany({
       where: { communityId },
@@ -698,12 +717,11 @@ router.get("/blocks", async (req, res) => {
 // Create a new block
 router.post("/blocks", async (req, res) => {
   try {
-    const { name, communityId } = req.body;
+    const { name } = req.body;
+    const communityId = req.user.communityId;
 
-    if (!name || !communityId) {
-      return res
-        .status(400)
-        .json({ error: "Name and community ID are required" });
+    if (!name) {
+      return res.status(400).json({ error: "Name is required" });
     }
 
     // Check if block name already exists in the community
@@ -843,11 +861,8 @@ router.delete("/blocks/:id", async (req, res) => {
 // Get all units for a community or block
 router.get("/units", async (req, res) => {
   try {
-    const { communityId, blockId } = req.query;
-
-    if (!communityId) {
-      return res.status(400).json({ error: "Community ID is required" });
-    }
+    const communityId = req.user.communityId;
+    const { blockId } = req.query;
 
     const whereClause = { communityId };
     if (blockId) {
@@ -894,12 +909,13 @@ router.get("/units", async (req, res) => {
 // Create a new unit
 router.post("/units", async (req, res) => {
   try {
-    const { number, blockId, communityId } = req.body;
+    const { number, blockId } = req.body;
+    const communityId = req.user.communityId;
 
-    if (!number || !blockId || !communityId) {
+    if (!number || !blockId) {
       return res
         .status(400)
-        .json({ error: "Number, block ID, and community ID are required" });
+        .json({ error: "Number and block ID are required" });
     }
 
     // Check if unit number already exists in the block
@@ -1090,16 +1106,14 @@ router.post("/units/:unitId/assign-resident", async (req, res) => {
       return res.status(400).json({ error: "User ID is required" });
     }
 
-    // Verify unit exists
-    const unit = await prisma.unit.findUnique({
-      where: { id: unitId },
+    // Verify unit exists and belongs to this admin's community
+    const unit = await prisma.unit.findFirst({
+      where: { id: unitId, communityId: req.user.communityId },
     });
 
     if (!unit) {
       return res.status(404).json({ error: "Unit not found" });
     }
-
-    // Verify user exists and belongs to the same community
     const user = await prisma.user.findFirst({
       where: {
         id: userId,
@@ -1159,12 +1173,22 @@ router.post("/units/:unitId/remove-resident", async (req, res) => {
       return res.status(400).json({ error: "User ID is required" });
     }
 
+    // Verify unit exists and belongs to this admin's community
+    const unit = await prisma.unit.findFirst({
+      where: { id: unitId, communityId: req.user.communityId },
+    });
+
+    if (!unit) {
+      return res.status(404).json({ error: "Unit not found" });
+    }
+
     // Verify user is assigned to this unit
     const user = await prisma.user.findFirst({
       where: {
         id: userId,
         unitId: unitId,
         role: "RESIDENT",
+        communityId: req.user.communityId,
       },
     });
 
@@ -1253,14 +1277,8 @@ router.get("/community", async (req, res) => {
 // Create or update community configuration
 router.post("/community", async (req, res) => {
   try {
-    const {
-      name,
-      description,
-      address,
-      facilities,
-      communityId,
-      overstayLimits,
-    } = req.body;
+    const { name, description, address, facilities, overstayLimits } = req.body;
+    const communityId = req.user.communityId;
 
     if (!name || !name.trim()) {
       return res.status(400).json({
@@ -1683,7 +1701,7 @@ router.patch(
       const facilityTypeEnum = facilityType.toUpperCase();
 
       // Find the community
-      const { communityId } = req.query;
+      const communityId = req.user.communityId;
       const community = await prisma.community.findUnique({
         where: { id: communityId },
       });
@@ -1856,7 +1874,7 @@ router.patch(
 // Delete community configuration
 router.delete("/community", async (req, res) => {
   try {
-    const { communityId } = req.query;
+    const communityId = req.user.communityId;
     const community = await prisma.community.findUnique({
       where: { id: communityId },
     });
@@ -1940,6 +1958,14 @@ router.delete(
   async (req, res) => {
     try {
       const { id } = req.params;
+      const existing = await prisma.booking.findFirst({
+        where: { id, facility: { communityId: req.user.communityId } },
+      });
+      if (!existing) {
+        return res
+          .status(404)
+          .json({ error: "Booking not found in your community" });
+      }
       await prisma.booking.delete({ where: { id } });
       res.json({ message: "Booking deleted" });
     } catch (err) {
@@ -1951,12 +1977,7 @@ router.delete(
 
 router.get("/gatekeepers", async (req, res) => {
   try {
-    const { communityId } = req.query;
-    if (!communityId) {
-      return res
-        .status(400)
-        .json({ error: "communityId query parameter is required" });
-    }
+    const communityId = req.user.communityId;
     const gatekeepers = await prisma.user.findMany({
       where: { communityId, role: "GATEKEEPER" },
       select: {
@@ -1975,20 +1996,16 @@ router.get("/gatekeepers", async (req, res) => {
 });
 
 router.post("/gatekeeper-signup", async (req, res) => {
-  const { name, email, password, communityId } = req.body;
+  const { name, email, password } = req.body;
+  const communityId = req.user.communityId;
 
   try {
-    if (!communityId) {
-      return res.status(400).json({
-        error: "Community selection is required.",
-      });
-    }
     const community = await prisma.community.findUnique({
       where: { id: communityId },
     });
     if (!community) {
       return res.status(400).json({
-        error: "Selected community not found. Please select a valid community.",
+        error: "Community configuration not found.",
       });
     }
     const existingGatekeeper = await prisma.user.findUnique({
@@ -2031,11 +2048,13 @@ router.post("/gatekeeper-signup", async (req, res) => {
 router.delete("/gatekeepers/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const gatekeeper = await prisma.user.findUnique({
-      where: { id },
+    const gatekeeper = await prisma.user.findFirst({
+      where: { id, communityId: req.user.communityId, role: "GATEKEEPER" },
     });
     if (!gatekeeper) {
-      return res.status(404).json({ error: "Gatekeeper not found" });
+      return res
+        .status(404)
+        .json({ error: "Gatekeeper not found in your community" });
     }
     await prisma.user.delete({ where: { id } });
     res.json({ message: "Gatekeeper deleted" });
@@ -2046,12 +2065,13 @@ router.delete("/gatekeepers/:id", async (req, res) => {
 });
 
 router.get("/visitor", checkFeature("VISITOR_MANAGEMENT"), async (req, res) => {
-  const { communityId, from, to } = req.query;
+  const communityId = req.user.communityId;
+  const { from, to } = req.query;
 
-  if (!communityId || !from || !to) {
+  if (!from || !to) {
     return res
       .status(400)
-      .json({ error: "All fields (communityId, from, to) are required" });
+      .json({ error: "from and to date fields are required" });
   }
 
   try {
@@ -2109,10 +2129,8 @@ router.post(
   async (req, res) => {
     try {
       const { file } = req;
-      const { communityId, name } = req.body;
-
-      if (!communityId)
-        return res.status(400).json({ error: "CommunityId required" });
+      const { name } = req.body;
+      const communityId = req.user.communityId;
 
       if (!file) return res.status(400).json({ error: "PDF file is required" });
 
@@ -2136,11 +2154,7 @@ router.post(
 
 router.get("/pdfs", checkFeature("DOCUMENTS_UPLOADING"), async (req, res) => {
   try {
-    const { communityId } = req.query;
-
-    if (!communityId) {
-      return res.status(400).json({ error: "CommunityId required" });
-    }
+    const communityId = req.user.communityId;
 
     const pdfs = await prisma.pdfs.findMany({
       where: { communityId },
@@ -2929,15 +2943,13 @@ router.post(
 
 // ─── Vehicle Management (Admin) ──────────────────────────────
 
-// GET /admin/vehicles?communityId&status
+// GET /admin/vehicles?status
 router.get(
   "/vehicles",
   checkFeature("VEHICLE_MANAGEMENT"),
   async (req, res) => {
-    const { communityId, status } = req.query;
-    if (!communityId) {
-      return res.status(400).json({ error: "communityId is required" });
-    }
+    const communityId = req.user.communityId;
+    const { status } = req.query;
     const where = { communityId };
     if (status) where.status = status.toUpperCase();
 
@@ -3008,15 +3020,12 @@ router.patch(
 
 // ─── Parking Management (Admin) ──────────────────────────────
 
-// GET /admin/parking/spots?communityId
+// GET /admin/parking/spots
 router.get(
   "/parking/spots",
   checkFeature("RENT_A_PARKING"),
   async (req, res) => {
-    const { communityId } = req.query;
-    if (!communityId) {
-      return res.status(400).json({ error: "communityId is required" });
-    }
+    const communityId = req.user.communityId;
     try {
       const spots = await prisma.parkingSpot.findMany({
         where: { communityId },
@@ -3035,19 +3044,13 @@ router.post(
   "/parking/spots",
   checkFeature("RENT_A_PARKING"),
   async (req, res) => {
-    const {
-      spotNumber,
-      spotType,
-      floor,
-      block,
-      pricePerDay,
-      isAvailable,
-      communityId,
-    } = req.body;
+    const { spotNumber, spotType, floor, block, pricePerDay, isAvailable } =
+      req.body;
+    const communityId = req.user.communityId;
 
-    if (!spotNumber || !spotType || !communityId || pricePerDay === undefined) {
+    if (!spotNumber || !spotType || pricePerDay === undefined) {
       return res.status(400).json({
-        error: "spotNumber, spotType, pricePerDay and communityId are required",
+        error: "spotNumber, spotType, and pricePerDay are required",
       });
     }
 
@@ -3122,10 +3125,7 @@ router.get(
   "/visitors",
   checkFeature("VISITOR_MANAGEMENT"),
   async (req, res) => {
-    const { communityId } = req.query;
-    if (!communityId) {
-      return res.status(400).json({ error: "communityId is required" });
-    }
+    const communityId = req.user.communityId;
     try {
       const visitors = await prisma.visitor.findMany({
         where: { communityId },
@@ -3309,9 +3309,7 @@ router.patch(
 // ── Meetings CRUD ─────────────────────────────────────────────
 router.get("/meetings", async (req, res) => {
   try {
-    const { communityId } = req.query;
-    if (!communityId)
-      return res.status(400).json({ error: "communityId is required" });
+    const communityId = req.user.communityId;
 
     const meetings = await prisma.meeting.findMany({
       where: { communityId },
@@ -3332,13 +3330,13 @@ router.get("/meetings", async (req, res) => {
 
 router.post("/meetings", async (req, res) => {
   try {
-    const { title, description, location, scheduledAt, agenda, communityId } =
-      req.body;
+    const { title, description, location, scheduledAt, agenda } = req.body;
+    const communityId = req.user.communityId;
 
-    if (!title || !scheduledAt || !communityId) {
+    if (!title || !scheduledAt) {
       return res
         .status(400)
-        .json({ error: "title, scheduledAt, and communityId are required" });
+        .json({ error: "title and scheduledAt are required" });
     }
 
     const meeting = await prisma.meeting.create({
@@ -3418,9 +3416,7 @@ router.get(
   checkFeature("VISITOR_MANAGEMENT"),
   async (req, res) => {
     try {
-      const { communityId } = req.query;
-      if (!communityId)
-        return res.status(400).json({ error: "communityId is required" });
+      const communityId = req.user.communityId;
 
       const community = await prisma.community.findUnique({
         where: { id: communityId },
@@ -3464,9 +3460,7 @@ router.get(
 
 router.get("/overstay-settings", async (req, res) => {
   try {
-    const { communityId } = req.query;
-    if (!communityId)
-      return res.status(400).json({ error: "communityId is required" });
+    const communityId = req.user.communityId;
 
     const community = await prisma.community.findUnique({
       where: { id: communityId },
@@ -3484,9 +3478,8 @@ router.get("/overstay-settings", async (req, res) => {
 
 router.patch("/overstay-settings", async (req, res) => {
   try {
-    const { communityId, ...settings } = req.body;
-    if (!communityId)
-      return res.status(400).json({ error: "communityId is required" });
+    const communityId = req.user.communityId;
+    const settings = req.body;
 
     const community = await prisma.community.findUnique({
       where: { id: communityId },

@@ -50,6 +50,16 @@ app.use("/notifications", notificationsRoutes);
 app.use("/cron", cronRoutes);
 app.use("/superadmin", superAdminRoutes);
 
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error(
+    `[${new Date().toISOString()}] Unhandled error on ${req.method} ${req.url}:`,
+    err,
+  );
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: "Internal server error" });
+});
+
 export default app;
 
 if (process.env.VERCEL !== "1") {

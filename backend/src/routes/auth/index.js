@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import express from "express";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
@@ -16,6 +17,8 @@ const transporter = nodemailer.createTransport({
 
 const otps = {}; // { email: { code: string, expiresAt: number } }
 const OTP_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
+const resetTokens = {}; // { token: { email: string, expiresAt: number } }
+const RESET_TOKEN_EXPIRY_MS = 15 * 60 * 1000; // 15 minutes
 
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
@@ -385,20 +388,41 @@ router.post("/check-otp", async (req, res) => {
   }
   if (record.code === otp) {
     delete otps[email];
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    resetTokens[resetToken] = {
+      email,
+      expiresAt: Date.now() + RESET_TOKEN_EXPIRY_MS,
+    };
     return res
       .status(200)
-      .json({ message: "OTP verified successfully.", success: true });
+      .json({
+        message: "OTP verified successfully.",
+        success: true,
+        resetToken,
+      });
   }
   return res.status(400).json({ message: "Invalid OTP." });
 });
 
 router.post("/password-reset", async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
+  const { password, resetToken } = req.body;
+  if (!password || !resetToken) {
     return res
       .status(400)
-      .json({ message: "Email and password are required." });
+      .json({ message: "Password and reset token are required." });
   }
+  const record = resetTokens[resetToken];
+  if (!record) {
+    return res.status(400).json({ message: "Invalid or expired reset token." });
+  }
+  if (Date.now() > record.expiresAt) {
+    delete resetTokens[resetToken];
+    return res
+      .status(400)
+      .json({ message: "Reset token has expired. Please start over." });
+  }
+  const { email } = record;
+  delete resetTokens[resetToken];
   try {
     const result = await prisma.user.update({
       where: { email },

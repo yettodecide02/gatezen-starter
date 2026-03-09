@@ -35,12 +35,8 @@ function isAlignedToSlot(start, end, slotMins) {
 }
 
 router.get("/dashboard", async (req, res) => {
-  const { userId, communityId } = req.query;
-  if (!userId || !communityId) {
-    return res
-      .status(400)
-      .json({ error: "Missing userId or communityId in query parameters" });
-  }
+  const userId = req.user.id;
+  const communityId = req.user.communityId;
   try {
     // Get community announcements (not user-specific)
     const announcements = await prisma.announcement.findMany({
@@ -91,7 +87,8 @@ router.get("/dashboard", async (req, res) => {
 // Maintenance routes for residents
 router.get("/maintenance", checkFeature("HELPDESK"), async (req, res) => {
   try {
-    const { userId, communityId } = req.query;
+    const userId = req.user.id;
+    const communityId = req.user.communityId;
     const tickets = await prisma.ticket.findMany({
       where: { userId, communityId },
       include: {
@@ -122,11 +119,13 @@ router.get("/maintenance", checkFeature("HELPDESK"), async (req, res) => {
 
 router.post("/maintenance", checkFeature("HELPDESK"), async (req, res) => {
   try {
-    const { userId, title, category, description, communityId } = req.body;
+    const { title, category, description } = req.body;
+    const userId = req.user.id;
+    const communityId = req.user.communityId;
 
-    if (!userId || !title || !category || !communityId) {
+    if (!title || !category) {
       return res.status(400).json({
-        error: "Missing required fields: userId, title, category, communityId",
+        error: "Missing required fields: title, category",
       });
     }
 
@@ -192,7 +191,8 @@ router.post(
   async (req, res) => {
     try {
       const { id } = req.params;
-      const { userId, name, text } = req.body;
+      const { name, text } = req.body;
+      const userId = req.user.id;
 
       const comment = await prisma.comment.create({
         data: { text, userId, ticketId: id },
@@ -227,21 +227,19 @@ router.get(
   checkFeature("VISITOR_MANAGEMENT"),
   async (req, res) => {
     try {
-      const { from, to, communityId, userId } = req.query;
+      const { from, to } = req.query;
+      const userId = req.user.id;
+      const communityId = req.user.communityId;
 
       if (!communityId) {
         return res.status(400).json({ error: "communityId is required" });
       }
 
-      // Build where clause
+      // Build where clause — always scoped to the authenticated resident
       const whereClause = {
         communityId: String(communityId),
+        userId,
       };
-
-      // If userId is provided, filter by resident (for resident's own visitors)
-      if (userId) {
-        whereClause.userId = String(userId);
-      }
 
       // Date range filtering — frontend sends full ISO local-day boundaries
       whereClause.visitDate = {};
@@ -305,18 +303,11 @@ router.post(
   checkFeature("VISITOR_MANAGEMENT"),
   async (req, res) => {
     try {
-      const {
-        name,
-        contact,
-        visitorType,
-        visitDate,
-        vehicleNo,
-        communityId,
-        userId,
-      } = req.body || {};
+      const { name, contact, visitorType, visitDate, vehicleNo, communityId } =
+        req.body || {};
 
-      // Use authenticated user's ID as userId if not provided
-      const actualUserId = userId || req.user?.id;
+      // Always use the authenticated user's ID
+      const actualUserId = req.user.id;
 
       if (!name || !communityId || !actualUserId) {
         return res.status(400).json({
@@ -435,7 +426,7 @@ router.post(
 
 router.get("/facilities", checkFeature("AMENITY_BOOKING"), async (req, res) => {
   try {
-    const { communityId } = req.query;
+    const communityId = req.user.communityId;
 
     const community = await prisma.community.findUnique({
       where: { id: communityId },
@@ -552,18 +543,15 @@ function overlaps(aStart, aEnd, bStart, bEnd) {
 }
 
 // GET /bookings?facilityId=&date=YYYY-MM-DD  (facility availability)
-// GET /bookings?userId=&communityId=          (resident's own bookings)
+// GET /bookings?communityId=               (resident's own bookings)
 router.get("/bookings", checkFeature("AMENITY_BOOKING"), async (req, res) => {
   try {
-    const { facilityId, date, userId, communityId } = req.query;
+    const { facilityId, date } = req.query;
+    const communityId = req.user.communityId;
+    const userId = req.user.id;
 
     // ── Resident's own bookings ──────────────────────────────
     if (!facilityId && !date) {
-      if (!userId) {
-        return res
-          .status(400)
-          .json({ error: "facilityId+date or userId is required" });
-      }
       const where = { userId };
       if (communityId) where.communityId = communityId;
 
@@ -654,9 +642,10 @@ router.get(
   checkFeature("AMENITY_BOOKING"),
   async (req, res) => {
     try {
-      const { userId, date } = req.query;
-      if (!userId || !date) {
-        return res.status(400).json({ error: "userId and date are required" });
+      const userId = req.user.id;
+      const { date } = req.query;
+      if (!date) {
+        return res.status(400).json({ error: "date is required" });
       }
 
       const dayStart = new Date(`${date}T00:00:00.000Z`);
@@ -690,12 +679,12 @@ router.get(
 
 router.post("/bookings", checkFeature("AMENITY_BOOKING"), async (req, res) => {
   try {
-    const { userId, facilityId, startsAt, endsAt, note, peopleCount } =
-      req.body;
-    if (!userId || !facilityId || !startsAt || !endsAt) {
+    const { facilityId, startsAt, endsAt, note, peopleCount } = req.body;
+    const userId = req.user.id;
+    if (!facilityId || !startsAt || !endsAt) {
       return res
         .status(400)
-        .json({ error: "userId, facilityId, startsAt, endsAt are required" });
+        .json({ error: "facilityId, startsAt, endsAt are required" });
     }
 
     // First, try to find if this is a FacilityConfiguration ID
@@ -923,6 +912,12 @@ router.post("/bookings", checkFeature("AMENITY_BOOKING"), async (req, res) => {
 router.patch("/bookings/:id/cancel", async (req, res) => {
   try {
     const { id } = req.params;
+    const existing = await prisma.booking.findFirst({
+      where: { id, userId: req.user.id },
+    });
+    if (!existing) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
     const updated = await prisma.booking.update({
       where: { id },
       data: { status: "CANCELLED" },
@@ -1043,11 +1038,7 @@ router.patch("/profile", async (req, res) => {
 // Get all announcements for the resident's community
 router.get("/announcements", async (req, res) => {
   try {
-    const { communityId } = req.query;
-
-    if (!communityId) {
-      return res.status(400).json({ error: "communityId is required" });
-    }
+    const communityId = req.user.communityId;
 
     const announcements = await prisma.announcement.findMany({
       where: { communityId },
@@ -1078,12 +1069,9 @@ router.get("/announcements", async (req, res) => {
 // Get resident's payments
 router.get("/payments", checkFeature("UTILITY_PAYMENT"), async (req, res) => {
   try {
-    const { communityId, status, from, to } = req.query;
+    const { status, from, to } = req.query;
     const userId = req.user.id;
-
-    if (!communityId) {
-      return res.status(400).json({ error: "communityId is required" });
-    }
+    const communityId = req.user.communityId;
 
     let whereClause = {
       userId,
@@ -1140,11 +1128,7 @@ router.get("/payments", checkFeature("UTILITY_PAYMENT"), async (req, res) => {
 // Get resident's community statistics
 router.get("/community-stats", async (req, res) => {
   try {
-    const { communityId } = req.query;
-
-    if (!communityId) {
-      return res.status(400).json({ error: "communityId is required" });
-    }
+    const communityId = req.user.communityId;
 
     const [
       totalBlocks,
@@ -1208,11 +1192,9 @@ router.get("/community-stats", async (req, res) => {
 });
 
 router.get("/packages", async (req, res) => {
-  const { communityId, userId, from, to } = req.query;
-
-  if (!communityId || !userId) {
-    return res.status(400).json({ error: "communityId and userId required" });
-  }
+  const communityId = req.user.communityId;
+  const userId = req.user.id;
+  const { from, to } = req.query;
 
   if (!from || !to) {
     return res.status(400).json({ error: "date required" });
@@ -1395,11 +1377,7 @@ router.get("/directory", async (req, res) => {
 
 router.get("/pdfs", checkFeature("DOCUMENTS_UPLOADING"), async (req, res) => {
   try {
-    const { communityId } = req.query;
-
-    if (!communityId) {
-      return res.status(400).json({ error: "CommunityId required" });
-    }
+    const communityId = req.user.communityId;
 
     const pdfs = await prisma.pdfs.findMany({
       where: { communityId },
@@ -1481,11 +1459,8 @@ router.get(
 // Get kid passes for a resident
 router.get("/kid-passes", checkFeature("KIDS_CHECKOUT"), async (req, res) => {
   try {
-    const { userId, communityId } = req.query;
-
-    if (!userId || !communityId) {
-      return res.status(400).json({ error: "Missing userId or communityId" });
-    }
+    const userId = req.user.id;
+    const communityId = req.user.communityId;
 
     const kidPasses = await prisma.kidPass.findMany({
       where: {
@@ -1992,10 +1967,8 @@ router.delete(
 
 router.get("/meetings", checkFeature("MEETING_ALIGNMENT"), async (req, res) => {
   try {
-    const { communityId, userId } = req.query;
-    if (!communityId) {
-      return res.status(400).json({ error: "communityId is required" });
-    }
+    const communityId = req.user.communityId;
+    const userId = req.user.id;
 
     const meetings = await prisma.meeting.findMany({
       where: { communityId },
@@ -2043,7 +2016,7 @@ router.post(
     try {
       const { id } = req.params;
       const { response, userId } = req.body;
-      const resolvedUserId = userId || req.user.id;
+      const resolvedUserId = req.user.id;
 
       const validResponses = ["GOING", "NOT_GOING", "MAYBE"];
       if (!response || !validResponses.includes(response)) {
@@ -2068,12 +2041,8 @@ router.post(
 
 router.get("/home-planner", checkFeature("HOME_PLANNER"), async (req, res) => {
   try {
-    const { communityId, userId } = req.query;
-    const resolvedUserId = userId || req.user.id;
-
-    if (!communityId) {
-      return res.status(400).json({ error: "communityId is required" });
-    }
+    const communityId = req.user.communityId;
+    const resolvedUserId = req.user.id;
 
     const tasks = await prisma.homePlannerTask.findMany({
       where: { communityId, userId: resolvedUserId },
@@ -2090,15 +2059,12 @@ router.get("/home-planner", checkFeature("HOME_PLANNER"), async (req, res) => {
 // ─── POST /home-planner ──────────────────────────────────────
 router.post("/home-planner", checkFeature("HOME_PLANNER"), async (req, res) => {
   try {
-    const { communityId, userId, title, description, taskType, scheduledDate } =
-      req.body;
+    const { title, description, taskType, scheduledDate } = req.body;
+    const communityId = req.user.communityId;
+    const resolvedUserId = req.user.id;
 
-    const resolvedUserId = userId || req.user.id;
-
-    if (!communityId || !title) {
-      return res
-        .status(400)
-        .json({ error: "communityId and title are required" });
+    if (!title) {
+      return res.status(400).json({ error: "title is required" });
     }
 
     const task = await prisma.homePlannerTask.create({
@@ -2189,9 +2155,7 @@ router.delete(
 // GET /resident/parking — available spots (simple alias)
 router.get("/parking", checkFeature("RENT_A_PARKING"), async (req, res) => {
   try {
-    const { communityId } = req.query;
-    if (!communityId)
-      return res.status(400).json({ error: "communityId is required" });
+    const communityId = req.user.communityId;
 
     const spots = await prisma.parkingSpot.findMany({
       where: { communityId, isAvailable: true },
@@ -2210,9 +2174,7 @@ router.get(
   checkFeature("RENT_A_PARKING"),
   async (req, res) => {
     try {
-      const { communityId } = req.query;
-      if (!communityId)
-        return res.status(400).json({ error: "communityId is required" });
+      const communityId = req.user.communityId;
 
       const spots = await prisma.parkingSpot.findMany({
         where: { communityId },
@@ -2232,11 +2194,8 @@ router.get(
   checkFeature("RENT_A_PARKING"),
   async (req, res) => {
     try {
-      const { communityId, userId } = req.query;
-      if (!communityId || !userId)
-        return res
-          .status(400)
-          .json({ error: "communityId and userId are required" });
+      const communityId = req.user.communityId;
+      const userId = req.user.id;
 
       const bookings = await prisma.parkingBooking.findMany({
         where: { communityId, userId },
@@ -2266,10 +2225,12 @@ router.post(
   checkFeature("RENT_A_PARKING"),
   async (req, res) => {
     try {
-      const { spotId, userId, communityId, fromDate, toDate } = req.body;
-      if (!spotId || !userId || !communityId || !fromDate || !toDate) {
+      const { spotId, fromDate, toDate } = req.body;
+      const userId = req.user.id;
+      const communityId = req.user.communityId;
+      if (!spotId || !fromDate || !toDate) {
         return res.status(400).json({
-          error: "spotId, userId, communityId, fromDate, toDate are required",
+          error: "spotId, fromDate, toDate are required",
         });
       }
 
@@ -2347,9 +2308,7 @@ router.get(
   checkFeature("VISITOR_MANAGEMENT"),
   async (req, res) => {
     try {
-      const { communityId } = req.query;
-      if (!communityId)
-        return res.status(400).json({ error: "communityId is required" });
+      const communityId = req.user.communityId;
 
       const community = await prisma.community.findUnique({
         where: { id: communityId },
