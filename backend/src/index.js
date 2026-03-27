@@ -2,6 +2,10 @@ import "dotenv/config";
 
 import express from "express";
 import cors from "cors";
+import axios from "axios";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 import authRoutes from "./routes/auth/index.js";
 import adminRoutes from "./routes/admin/index.js";
@@ -24,14 +28,126 @@ app.use(
 );
 app.use(express.json());
 app.use(limiter);
-app.set("trust proxy", 1);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const locationCountsFile = path.join(__dirname, "locations.json");
+const logFile = path.join(__dirname, "logs.txt");
+
+
+app.set("trust proxy", true); 
+
+const cache = new Map();
+const MAX_CACHE_SIZE = 1000;
+
+let locationCounts = {};
+let pendingWrites = false;
+
+// Load file safely
+try {
+  if (fs.existsSync(locationCountsFile)) {
+    locationCounts = JSON.parse(fs.readFileSync(locationCountsFile, "utf-8"));
+  }
+} catch {
+  locationCounts = {};
+}
+
+// 🧠 Batch write (every 5 sec)
+setInterval(() => {
+  if (!pendingWrites) return;
+
+  fs.writeFile(
+    locationCountsFile,
+    JSON.stringify(locationCounts, null, 2),
+    (err) => {
+      if (err) console.error("Error writing locations:", err);
+    },
+  );
+
+  pendingWrites = false;
+}, 5000);
+
 app.use((req, res, next) => {
   const start = Date.now();
+
   res.on("finish", () => {
-    console.log(
-      `[${new Date().toISOString()}] ${req.method} ${req.url} | ${res.statusCode} | ${Date.now() - start}ms | IP: ${req.ip}`,
-    );
+    let ip =
+      req.headers["x-forwarded-for"]?.split(",")[0] ||
+      req.socket.remoteAddress ||
+      req.ip;
+
+    if (ip?.includes("::ffff:")) {
+      ip = ip.split(":").pop();
+    }
+
+    const userAgent = req.headers["user-agent"] || "Unknown";
+
+    const logBase = `[${new Date().toISOString()}] ${req.method} ${
+      req.url
+    } | ${res.statusCode} | ${Date.now() - start}ms | IP: ${ip}`;
+
+    const writeLog = (extra) => {
+      const finalLog = `${logBase} | ${extra} | UA: ${userAgent}\n`;
+
+      fs.appendFile(logFile, finalLog, (err) => {
+        if (err) console.error("Log write error:", err);
+      });
+
+      console.log(finalLog.trim());
+    };
+
+    const updateLocationCount = (locationKey) => {
+      locationCounts[locationKey] = (locationCounts[locationKey] || 0) + 1;
+
+      pendingWrites = true;
+    };
+
+    // ✅ Cache hit
+    if (cache.has(ip)) {
+      const { city, country } = cache.get(ip);
+      const locationKey = `${city}, ${country}`;
+
+      updateLocationCount(locationKey);
+      writeLog(locationKey);
+      return;
+    }
+
+    writeLog("resolving location...");
+
+    (async () => {
+      let city = "Unknown";
+      let country = "";
+
+      try {
+        if (ip === "127.0.0.1" || ip === "::1") {
+          city = "Localhost";
+        } else {
+          const { data } = await axios.get(`http://ip-api.com/json/${ip}`, {
+            timeout: 2000,
+          });
+
+          if (data.status === "success") {
+            city = data.city;
+            country = data.country;
+
+            // 🧠 Limit cache size
+            if (cache.size > MAX_CACHE_SIZE) {
+              const firstKey = cache.keys().next().value;
+              cache.delete(firstKey);
+            }
+
+            cache.set(ip, { city, country });
+          }
+        }
+      } catch (err) {
+        console.error("Geo lookup failed:", err.message);
+      }
+
+      const locationKey = `${city}, ${country}`;
+      updateLocationCount(locationKey);
+      writeLog(locationKey);
+    })();
   });
+
   next();
 });
 

@@ -51,6 +51,7 @@ import SuperAdminShell from "./shells/SuperAdminShell.jsx";
 import SuperAdminLogin from "./pages/superadmin/SuperAdminLogin.jsx";
 import Plans from "./pages/superadmin/Plans.jsx";
 import Communities from "./pages/superadmin/Communities.jsx";
+import Locations from "./pages/superadmin/Locations.jsx";
 
 /* ----------------------------- MAIN APP ROUTES ----------------------------- */
 
@@ -325,6 +326,16 @@ export default function App() {
           <ProtectedSuperAdminRoute>
             <SuperAdminShell>
               <Communities />
+            </SuperAdminShell>
+          </ProtectedSuperAdminRoute>
+        }
+      />
+      <Route
+        path="/superadmin/locations"
+        element={
+          <ProtectedSuperAdminRoute>
+            <SuperAdminShell>
+              <Locations />
             </SuperAdminShell>
           </ProtectedSuperAdminRoute>
         }

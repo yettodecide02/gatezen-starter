@@ -1,6 +1,12 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { clearSA, getSAUser } from "../lib/superAdminAuth";
-import { FiLogOut, FiLayers, FiGlobe, FiShield } from "react-icons/fi";
+import {
+  FiLogOut,
+  FiLayers,
+  FiGlobe,
+  FiShield,
+  FiMapPin,
+} from "react-icons/fi";
 
 export default function SuperAdminShell({ children }) {
   const navigate = useNavigate();
@@ -51,6 +57,11 @@ export default function SuperAdminShell({ children }) {
             to="/superadmin/communities"
             icon={<FiGlobe />}
             label="Communities"
+          />
+          <Item
+            to="/superadmin/locations"
+            icon={<FiMapPin />}
+            label="Locations"
           />
         </nav>
 

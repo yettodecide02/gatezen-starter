@@ -1,10 +1,16 @@
 import express from "express";
 import jwt from "jsonwebtoken";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import prisma from "../../../lib/prisma.js";
 import { superAdminAuthMiddleware } from "../../middleware/superAdminAuth.js";
 import { invalidateCommunityPlanCache } from "../../middleware/checkFeature.js";
 
 const router = express.Router();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const locationsFilePath = path.resolve(__dirname, "../../locations.json");
 
 // ─── POST /superadmin/auth/register ────────────────────────
 // Bootstrap the first super admin. Protected by a secret header.
@@ -78,6 +84,27 @@ router.post("/auth/login", async (req, res) => {
 router.get("/auth/me", superAdminAuthMiddleware, (req, res) => {
   const { id, name, email, createdAt } = req.superAdmin;
   return res.status(200).json({ id, name, email, createdAt });
+});
+
+// GET /superadmin/location-counts
+router.get("/location-counts", superAdminAuthMiddleware, async (req, res) => {
+  try {
+    if (!fs.existsSync(locationsFilePath)) {
+      return res.status(200).json({});
+    }
+
+    const raw = await fs.promises.readFile(locationsFilePath, "utf-8");
+    const parsed = JSON.parse(raw);
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return res.status(200).json({});
+    }
+
+    return res.status(200).json(parsed);
+  } catch (e) {
+    console.error("Get location counts error:", e);
+    return res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 // ─── Plan Management ─────────────────────────────────────────

@@ -29,3 +29,7 @@ ios/
 *.log.*
 *.tmp
 *.cache
+
+# Runtime backend data (keep local on server)
+backend/src/locations.json
+backend/src/logs.txt
