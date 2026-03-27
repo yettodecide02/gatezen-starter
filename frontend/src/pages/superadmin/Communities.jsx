@@ -3,7 +3,7 @@ import axios from "axios";
 import { FiSearch, FiMapPin, FiUsers, FiPackage } from "react-icons/fi";
 import { getSAToken } from "../../lib/superAdminAuth";
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
+const BACKEND_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 export default function Communities() {
   const [communities, setCommunities] = useState([]);

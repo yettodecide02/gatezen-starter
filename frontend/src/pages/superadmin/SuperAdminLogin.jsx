@@ -4,7 +4,7 @@ import axios from "axios";
 import { setSAToken, setSAUser } from "../../lib/superAdminAuth";
 import { FiShield, FiEye, FiEyeOff } from "react-icons/fi";
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
+const BACKEND_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 export default function SuperAdminLogin() {
   const navigate = useNavigate();
