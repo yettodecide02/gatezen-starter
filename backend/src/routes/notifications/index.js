@@ -39,7 +39,10 @@ router.post("/admin/clear-tokens", async (req, res) => {
   }
   try {
     const result = await prisma.user.updateMany({
-      where: { pushToken: { not: null } },
+      where: {
+        communityId: req.user.communityId,
+        pushToken: { not: null },
+      },
       data: { pushToken: null },
     });
     console.log(`[Push] Admin cleared ${result.count} push tokens`);

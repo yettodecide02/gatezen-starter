@@ -1,49 +1,70 @@
 import jwt from "jsonwebtoken";
 import prisma from "../../lib/prisma.js";
 
-export const authMiddleware = (req, res, next) => {
-  const token = req.headers.authorization?.split(" ")[1];
-  if (!token) {
-    return res.status(401).json({ error: "Unauthorized" });
+export const authMiddleware = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Unauthorized: Missing token" });
   }
 
-  jwt.verify(token, process.env.JWT_SECRET, async (err, decoded) => {
-    if (err) {
-      console.error("JWT verification error:", err);
-      return res.status(401).json({ error: "Unauthorized" });
+  const token = authHeader.split(" ")[1];
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const userId = decoded.id || decoded.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized: Invalid token payload" });
     }
-    req.user = decoded;
+
     const user = await prisma.user.findUnique({
-      where: { id: req.user.userId },
+      where: { id: userId },
     });
+
     if (!user) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return res.status(401).json({ error: "Unauthorized: User not found" });
     }
+
     req.user = user;
     next();
-  });
+  } catch (err) {
+    return res.status(401).json({ error: "Unauthorized: Invalid or expired token" });
+  }
 };
 
-const requestCount = {};
-const limitTime = 600000; // 10 minutes
-const maxRequests = 1000; // 1000 requests per 10 minutes per IP
+const requestCount = new Map();
+const LIMIT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+const MAX_REQUESTS = 1000; // 1000 requests per 10 minutes per IP
+const MAX_TRACKED_IPS = 5000;
+
+// Periodic cleanup to prevent unbounded memory growth
+if (typeof setInterval !== "undefined") {
+  setInterval(() => {
+    const now = Date.now();
+    for (const [ip, record] of requestCount.entries()) {
+      if (now - record.startTime > LIMIT_WINDOW_MS) {
+        requestCount.delete(ip);
+      }
+    }
+  }, 5 * 60 * 1000).unref?.();
+}
 
 export const limiter = (req, res, next) => {
-  const ip = req.ip;
+  const ip = req.ip || req.socket?.remoteAddress || "unknown";
   const currentTime = Date.now();
 
-  if (!requestCount[ip]) {
-    requestCount[ip] = { count: 1, startTime: currentTime };
+  const record = requestCount.get(ip);
+  if (!record || currentTime - record.startTime > LIMIT_WINDOW_MS) {
+    if (requestCount.size >= MAX_TRACKED_IPS) {
+      const oldestKey = requestCount.keys().next().value;
+      requestCount.delete(oldestKey);
+    }
+    requestCount.set(ip, { count: 1, startTime: currentTime });
   } else {
-    const timePassed = currentTime - requestCount[ip].startTime;
-
-    if (timePassed < limitTime) {
-      requestCount[ip].count++;
-      if (requestCount[ip].count > maxRequests) {
-        return res.status(429).send("Too many requests");
-      }
-    } else {
-      requestCount[ip] = { count: 1, startTime: currentTime };
+    record.count++;
+    if (record.count > MAX_REQUESTS) {
+      return res
+        .status(429)
+        .json({ error: "Too many requests. Please try again later." });
     }
   }
 

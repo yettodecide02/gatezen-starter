@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
 import prisma from "../../../lib/prisma.js";
 import { sendBulkPushNotifications } from "../../../lib/notifications.js";
+import { hashPassword, verifyPassword } from "../../../lib/passwords.js";
 
 const router = express.Router();
 
@@ -15,7 +16,7 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-const otps = {}; // { email: { code: string, expiresAt: number } }
+const otps = {}; // { email: { code: string, expiresAt: number, attempts: number } }
 const OTP_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 const resetTokens = {}; // { token: { email: string, expiresAt: number } }
 const RESET_TOKEN_EXPIRY_MS = 15 * 60 * 1000; // 15 minutes
@@ -23,13 +24,18 @@ const RESET_TOKEN_EXPIRY_MS = 15 * 60 * 1000; // 15 minutes
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
 
+  if (!email || !password) {
+    return res.status(400).json({ error: "Email and password are required" });
+  }
+
   try {
     const user = await prisma.user.findUnique({
-      where: { email, password },
+      where: { email },
       select: {
         id: true,
         name: true,
         email: true,
+        password: true,
         role: true,
         status: true,
         communityId: true,
@@ -46,7 +52,7 @@ router.post("/login", async (req, res) => {
       },
     });
 
-    if (!user) {
+    if (!user || !verifyPassword(password, user.password)) {
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
@@ -63,10 +69,15 @@ router.post("/login", async (req, res) => {
       },
     });
 
-    const jwttoken = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, {});
+    const jwttoken = jwt.sign(
+      { userId: user.id, id: user.id, role: user.role, communityId: user.communityId },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
 
+    const { password: _pw, ...safeUser } = user;
     const data = {
-      ...user,
+      ...safeUser,
       communityName: community?.name,
       unitNumber: user.unit?.number,
       blockName: user.unit?.block?.name,
@@ -117,29 +128,39 @@ router.post("/community-signup", async (req, res) => {
     if (existingCommunity) {
       return res.status(400).json({ error: "Community with this name exists" });
     }
-    const community = await prisma.community.create({
-      data: { name: communityName, address },
-    });
-    const admin = await prisma.user.create({
-      data: {
-        name,
-        email,
-        password,
-        role: "ADMIN",
-        status: "APPROVED",
-        communityId: community.id,
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        status: true,
-        communityId: true,
-      },
+
+    const hashedPassword = hashPassword(password);
+
+    const { community, admin } = await prisma.$transaction(async (tx) => {
+      const newCommunity = await tx.community.create({
+        data: { name: communityName, address },
+      });
+      const newAdmin = await tx.user.create({
+        data: {
+          name,
+          email,
+          password: hashedPassword,
+          role: "ADMIN",
+          status: "APPROVED",
+          communityId: newCommunity.id,
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          status: true,
+          communityId: true,
+        },
+      });
+      return { community: newCommunity, admin: newAdmin };
     });
 
-    const jwttoken = jwt.sign({ userId: admin.id }, process.env.JWT_SECRET, {});
+    const jwttoken = jwt.sign(
+      { userId: admin.id, id: admin.id, role: admin.role, communityId: admin.communityId },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
     return res.status(201).json({ user: admin, jwttoken });
   } catch (e) {
     console.error("Error during community signup:", e);
@@ -183,69 +204,74 @@ router.post("/signup", async (req, res) => {
       }
     }
 
-    if (unitId) {
-      const unit = await prisma.unit.findFirst({
-        where: {
-          id: unitId,
-          communityId: communityId,
-          ...(blockId && { blockId: blockId }),
-        },
-      });
+    const hashedPassword = hashPassword(password);
 
-      if (!unit) {
-        return res.status(400).json({
-          error: "Selected unit not found in this community/block.",
+    const user = await prisma.$transaction(async (tx) => {
+      if (unitId) {
+        const unit = await tx.unit.findFirst({
+          where: {
+            id: unitId,
+            communityId: communityId,
+            ...(blockId && { blockId: blockId }),
+          },
+          select: { id: true, maxResidents: true },
         });
+
+        if (!unit) {
+          throw new Error("Selected unit not found in this community/block.");
+        }
+
+        const activeUsers = await tx.user.count({
+          where: {
+            unitId: unitId,
+            role: "RESIDENT",
+            status: { not: "REJECTED" },
+            residentStatus: { not: "INACTIVE" },
+          },
+        });
+
+        if (activeUsers >= unit.maxResidents) {
+          throw new Error("The maximum limit of users for this unit is reached");
+        }
       }
 
-      const users = await prisma.user.findMany({
-        where: {
+      return await tx.user.create({
+        data: {
+          name,
+          email,
+          password: hashedPassword,
+          role: "RESIDENT",
+          status: "PENDING",
+          communityId: community.id,
           unitId: unitId,
+          residentStatus: "PENDING",
         },
         select: {
           id: true,
-        },
-      });
-
-      console.log(users);
-
-      if (users.length > 4)
-        return res.status(400).json({
-          error: "The maximum limit of users for this unit is reached",
-        });
-    }
-
-    const user = await prisma.user.create({
-      data: {
-        name,
-        email,
-        password,
-        role: "RESIDENT",
-        status: "PENDING",
-        communityId: community.id,
-        unitId: unitId,
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        status: true,
-        communityId: true,
-        unit: {
-          select: {
-            number: true,
-            block: {
-              select: {
-                name: true,
+          name: true,
+          email: true,
+          role: true,
+          status: true,
+          communityId: true,
+          unit: {
+            select: {
+              number: true,
+              block: {
+                select: {
+                  name: true,
+                },
               },
             },
           },
         },
-      },
+      });
     });
 
-    const jwttoken = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, {});
+    const jwttoken = jwt.sign(
+      { userId: user.id, id: user.id, role: user.role, communityId: user.communityId },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
 
     // Push notification to all admins of the community
     const admins = await prisma.user.findMany({
@@ -298,30 +324,7 @@ router.get("/existing-user", async (req, res) => {
     });
 
     if (existingUser) {
-      const community = await prisma.community.findUnique({
-        where: { id: existingUser.communityId },
-        select: {
-          id: true,
-          name: true,
-          plan: { select: { id: true, name: true, features: true } },
-        },
-      });
-      const jwttoken = jwt.sign(
-        { userId: existingUser.id },
-        process.env.JWT_SECRET,
-        {},
-      );
-      const data = {
-        ...existingUser,
-        communityName: community?.name,
-        unitNumber: existingUser.unit?.number,
-        blockName: existingUser.unit?.block?.name,
-        enabledFeatures: community?.plan?.features ?? [],
-        plan: community?.plan
-          ? { id: community.plan.id, name: community.plan.name }
-          : null,
-      };
-      return res.status(200).json({ exists: true, user: data, jwttoken });
+      return res.status(200).json({ exists: true });
     }
     return res.status(200).json({ exists: false });
   } catch (e) {
@@ -332,18 +335,18 @@ router.get("/existing-user", async (req, res) => {
 router.post("/send-otp", async (req, res) => {
   const { email, operation } = req.body;
   if (!email || !operation) {
-    return res.status(400).send("Email and operation are required");
+    return res.status(400).json({ success: false, message: "Email and operation are required" });
   }
 
   const userOtp = Math.floor(100000 + Math.random() * 900000).toString();
-  otps[email] = { code: userOtp, expiresAt: Date.now() + OTP_EXPIRY_MS };
+  otps[email] = { code: userOtp, expiresAt: Date.now() + OTP_EXPIRY_MS, attempts: 0 };
   if (operation != "Sign-up") {
     try {
       const existingUser = await prisma.user.findUnique({
         where: { email },
       });
       if (!existingUser) {
-        return res.status(404).send("User not found");
+        return res.status(404).json({ success: false, message: "User not found" });
       }
       await transporter.sendMail({
         from: process.env.EMAIL_ID,
@@ -351,10 +354,10 @@ router.post("/send-otp", async (req, res) => {
         subject: "Your GateZen password reset code",
         text: "Your OTP code is: " + userOtp,
       });
-      res.send("OTP sent successfully");
+      return res.status(200).json({ success: true, message: "OTP sent successfully" });
     } catch (error) {
       console.error("Error sending OTP:", error);
-      res.status(500).send("Error sending OTP");
+      return res.status(500).json({ success: false, message: "Error sending OTP" });
     }
   } else {
     try {
@@ -364,10 +367,10 @@ router.post("/send-otp", async (req, res) => {
         subject: "Your GateZen email verification code",
         text: "Your OTP code is: " + userOtp,
       });
-      res.send({ message: "OTP sent successfully", success: true });
+      return res.status(200).json({ success: true, message: "OTP sent successfully" });
     } catch (error) {
       console.error("Error sending OTP:", error);
-      res.status(500).send("Error sending OTP");
+      return res.status(500).json({ success: false, message: "Error sending OTP" });
     }
   }
 });
@@ -386,6 +389,15 @@ router.post("/check-otp", async (req, res) => {
       .status(400)
       .json({ message: "OTP has expired. Please request a new code." });
   }
+
+  record.attempts = (record.attempts || 0) + 1;
+  if (record.attempts > 5) {
+    delete otps[email];
+    return res.status(429).json({
+      message: "Too many failed attempts. Please request a new code.",
+    });
+  }
+
   if (record.code === otp) {
     delete otps[email];
     const resetToken = crypto.randomBytes(32).toString("hex");
@@ -393,13 +405,11 @@ router.post("/check-otp", async (req, res) => {
       email,
       expiresAt: Date.now() + RESET_TOKEN_EXPIRY_MS,
     };
-    return res
-      .status(200)
-      .json({
-        message: "OTP verified successfully.",
-        success: true,
-        resetToken,
-      });
+    return res.status(200).json({
+      message: "OTP verified successfully.",
+      success: true,
+      resetToken,
+    });
   }
   return res.status(400).json({ message: "Invalid OTP." });
 });
@@ -424,9 +434,10 @@ router.post("/password-reset", async (req, res) => {
   const { email } = record;
   delete resetTokens[resetToken];
   try {
+    const hashedPassword = hashPassword(password);
     const result = await prisma.user.update({
       where: { email },
-      data: { password },
+      data: { password: hashedPassword },
     });
 
     if (!result) {

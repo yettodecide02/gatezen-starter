@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import express from "express";
 import jwt from "jsonwebtoken";
 import fs from "fs";
@@ -6,18 +7,27 @@ import { fileURLToPath } from "url";
 import prisma from "../../../lib/prisma.js";
 import { superAdminAuthMiddleware } from "../../middleware/superAdminAuth.js";
 import { invalidateCommunityPlanCache } from "../../middleware/checkFeature.js";
+import { hashPassword, verifyPassword } from "../../../lib/passwords.js";
 
 const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const locationsFilePath = path.resolve(__dirname, "../../locations.json");
 
+function safeSecretCompare(provided, expected) {
+  if (!provided || !expected) return false;
+  const pBuf = Buffer.from(provided);
+  const eBuf = Buffer.from(expected);
+  if (pBuf.length !== eBuf.length) return false;
+  return crypto.timingSafeEqual(pBuf, eBuf);
+}
+
 // ─── POST /superadmin/auth/register ────────────────────────
 // Bootstrap the first super admin. Protected by a secret header.
 // Header: x-setup-secret: <SUPERADMIN_SETUP_SECRET from .env>
 router.post("/auth/register", async (req, res) => {
   const secret = req.headers["x-setup-secret"];
-  if (!secret || secret !== process.env.SUPERADMIN_SETUP_SECRET) {
+  if (!safeSecretCompare(secret, process.env.SUPERADMIN_SETUP_SECRET)) {
     return res.status(403).json({ error: "Forbidden" });
   }
 
@@ -36,8 +46,9 @@ router.post("/auth/register", async (req, res) => {
         .json({ error: "Super admin with this email already exists" });
     }
 
+    const hashedPassword = hashPassword(password);
     const superAdmin = await prisma.superAdmin.create({
-      data: { name, email, password },
+      data: { name, email, password: hashedPassword },
       select: { id: true, name: true, email: true, createdAt: true },
     });
 
@@ -61,7 +72,7 @@ router.post("/auth/login", async (req, res) => {
       select: { id: true, name: true, email: true, password: true },
     });
 
-    if (!superAdmin || superAdmin.password !== password) {
+    if (!superAdmin || !verifyPassword(password, superAdmin.password)) {
       return res.status(401).json({ error: "Invalid email or password" });
     }
 

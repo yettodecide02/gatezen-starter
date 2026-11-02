@@ -60,6 +60,22 @@ enum Feature {
   BALANCE_SHEET_TAX
 }
 
+enum ResidentSubtype {
+  OWNER
+  TENANT
+}
+
+enum GroupType {
+  OWNERSHIP
+  TENANT_HOUSEHOLD
+}
+
+enum ResidentStatus {
+  ACTIVE
+  PENDING
+  INACTIVE
+}
+
 model Plan {
   id          String      @id @default(uuid())
   name        String      @unique
@@ -96,6 +112,7 @@ model Community {
   plan             Plan?                   @relation(fields: [planId], references: [id], onDelete: SetNull)
   blocks           Block[]
   units            Unit[]
+  residencyGroups  ResidencyGroup[]
   announcements    Announcement[]
   bookings         Booking[]
   actualFacilities Facility[]              @relation("CommunityFacilities")
@@ -136,11 +153,13 @@ model Unit {
   number    String
   blockId   String
   communityId String
+  maxResidents Int    @default(5)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   block     Block    @relation(fields: [blockId], references: [id], onDelete: Cascade)
   community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
   residents User[]
+  residencyGroups ResidencyGroup[]
 
   @@index([blockId])
   @@index([communityId])
@@ -156,6 +175,15 @@ model User {
   status      UserStatus @default(PENDING)
   communityId String
   unitId      String?
+  residentSubtype ResidentSubtype?
+  residencyGroupId String?
+  isMinor     Boolean    @default(false)
+  guardianId  String?
+  leaseStartDate DateTime?
+  leaseEndDate DateTime?
+  isPrimaryContact Boolean @default(false)
+  residentStatus ResidentStatus @default(ACTIVE)
+  addedById   String?
   phone       String?
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
@@ -166,6 +194,12 @@ model User {
   payments    Payment[]
   community           Community        @relation(fields: [communityId], references: [id], onDelete: Cascade)
   unit                Unit?            @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  residencyGroup      ResidencyGroup?  @relation("ResidencyGroupMembers", fields: [residencyGroupId], references: [id], onDelete: SetNull)
+  guardian            User?            @relation("GuardianRelation", fields: [guardianId], references: [id], onDelete: SetNull)
+  dependents          User[]           @relation("GuardianRelation")
+  addedBy             User?            @relation("AddedByRelation", fields: [addedById], references: [id], onDelete: SetNull)
+  addedMembers        User[]           @relation("AddedByRelation")
+  primaryForResidencyGroups ResidencyGroup[] @relation("PrimaryResidentRelation")
   visitors            Visitor[]        @relation("UserVisitors")
   kidPasses           KidPass[]        @relation("UserKidPasses")
   packages            Packages[]
@@ -181,6 +215,28 @@ model User {
   @@index([communityId, role])
   @@index([communityId, status])
   @@index([unitId])
+  @@index([communityId, unitId, residentSubtype, residentStatus])
+  @@index([residencyGroupId])
+}
+
+model ResidencyGroup {
+  id                String    @id @default(cuid())
+  communityId       String
+  unitId            String
+  groupType         GroupType
+  name              String?
+  primaryResidentId String?
+  createdAt         DateTime  @default(now())
+  dissolvedAt       DateTime?
+
+  community         Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  unit              Unit      @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  primaryResident   User?     @relation("PrimaryResidentRelation", fields: [primaryResidentId], references: [id], onDelete: SetNull)
+  members           User[]    @relation("ResidencyGroupMembers")
+
+  @@index([communityId])
+  @@index([unitId])
+  @@index([unitId, groupType])
 }
 
 model Announcement {

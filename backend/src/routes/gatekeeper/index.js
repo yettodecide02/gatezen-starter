@@ -96,18 +96,30 @@ router.post("/", checkFeature("VISITOR_MANAGEMENT"), async (req, res) => {
   }
 
   try {
+    const existingVisitor = await prisma.visitor.findFirst({
+      where: { id: String(id), communityId: req.user.communityId },
+    });
+    if (!existingVisitor) {
+      return res.status(404).json({ error: "Visitor not found in your community" });
+    }
+
     let updateData = { updatedAt: new Date() };
 
     // Handle different status updates
     switch (status?.toLowerCase()) {
       case "checked_in":
+      case "approve":
         updateData.checkInAt = new Date();
         break;
       case "checked_out":
+      case "checkout":
         updateData.checkOutAt = new Date();
         break;
       case "pending":
-        // Reset check-in/out times for pending status
+      case "cancelled":
+      case "reject":
+      case "deny":
+        // Reset check-in/out times for pending/cancelled/denied status
         updateData.checkInAt = null;
         updateData.checkOutAt = null;
         break;
@@ -758,136 +770,54 @@ router.post(
   },
 );
 
-router.patch(
-  "/packages/:id",
-  checkFeature("DELIVERY_MANAGEMENT"),
-  async (req, res) => {
-    const { id } = req.params;
-    const { status, userId, name, image } = req.body;
+const handlePackageUpdate = async (req, res) => {
+  const { id } = req.params;
+  const { status, userId, name, image } = req.body;
 
-    if (!status && (userId || name || image !== undefined)) {
-      try {
-        const updateData = {};
-        if (userId) updateData.userId = userId;
-        if (name) updateData.name = name;
-        if (image) updateData.image = image;
-
-        const updated = await prisma.packages.update({
-          where: { id },
-          data: updateData,
-        });
-        return res.status(200).json({ status: "success", data: updated });
-      } catch (e) {
-        console.error(e);
-        return res.status(400).json({ error: e.message });
-      }
+  try {
+    const existing = await prisma.packages.findFirst({
+      where: { id, communityId: req.user.communityId },
+    });
+    if (!existing) {
+      return res.status(404).json({ error: "Package not found in your community" });
     }
 
-    if (!status) return res.status(400).json({ error: "status is required" });
+    if (!status && (userId || name || image !== undefined)) {
+      const updateData = {};
+      if (userId) updateData.userId = userId;
+      if (name) updateData.name = name;
+      if (image) updateData.image = image;
 
-    const STATUS_MAP = { pending: "PENDING", collected: "PICKED" };
-    const dbStatus = STATUS_MAP[status?.toLowerCase()];
-    if (!dbStatus)
-      return res.status(400).json({ error: `Invalid status: ${status}` });
-
-    try {
       const updated = await prisma.packages.update({
         where: { id },
-        data: { status: dbStatus },
-        select: {
-          image: true,
-          name: true,
-          user: { select: { name: true, email: true } },
-        },
+        data: updateData,
       });
-
-      if (dbStatus === "PICKED") {
-        try {
-          const base64Data = updated.image.includes("base64,")
-            ? updated.image.split("base64,")[1]
-            : updated.image;
-          await transporter.sendMail({
-            from: process.env.EMAIL_ID,
-            to: updated.user.email,
-            subject: `Your ${updated.name} package has been picked up`,
-            text: `Your ${updated.name} package has been collected from the gate.`,
-            attachments: [
-              {
-                filename: "package.jpg",
-                content: base64Data,
-                encoding: "base64",
-              },
-            ],
-          });
-        } catch (emailErr) {
-          console.error("Failed to send package email:", emailErr);
-        }
-      }
-
-      res.status(200).json({ status: "success", data: updated });
-    } catch (e) {
-      console.error(e);
-      res.status(400).json({ error: e.message });
-    }
-  },
-);
-
-router.put(
-  "/packages/:id",
-  checkFeature("DELIVERY_MANAGEMENT"),
-  async (req, res) => {
-    const { id } = req.params;
-    const { status, userId, name, image } = req.body;
-
-    // Detail update (edit package info)
-    if (!status && (userId || name || image !== undefined)) {
-      try {
-        const updateData = {};
-        if (userId) updateData.userId = userId;
-        if (name) updateData.name = name;
-        if (image) updateData.image = image;
-
-        const updated = await prisma.packages.update({
-          where: { id },
-          data: updateData,
-        });
-        return res.status(200).json({ status: "success", data: updated });
-      } catch (e) {
-        console.error(e);
-        return res.status(400).json({ error: e.message });
-      }
+      return res.status(200).json({ status: "success", data: updated });
     }
 
     if (!status) return res.status(400).json({ error: "status is required" });
 
-    // Map frontend values to DB enum values
     const STATUS_MAP = { pending: "PENDING", collected: "PICKED" };
     const dbStatus = STATUS_MAP[status?.toLowerCase()];
     if (!dbStatus)
       return res.status(400).json({ error: `Invalid status: ${status}` });
 
-    try {
-      const updated = await prisma.packages.update({
-        where: { id: id },
-        data: { status: dbStatus },
-        select: {
-          image: true,
-          name: true,
-          user: {
-            select: {
-              name: true,
-              email: true,
-            },
-          },
-        },
-      });
+    const updated = await prisma.packages.update({
+      where: { id },
+      data: { status: dbStatus },
+      select: {
+        image: true,
+        name: true,
+        user: { select: { name: true, email: true } },
+      },
+    });
 
-      // Send email notification only when package is collected/picked
-      if (dbStatus === "PICKED") {
-        try {
-          const base64Data = updated.image.includes("base64,")
-            ? updated.image.split("base64,")[1]
-            : updated.image;
+    if (dbStatus === "PICKED") {
+      try {
+        const base64Data = updated.image?.includes("base64,")
+          ? updated.image.split("base64,")[1]
+          : updated.image;
+        if (base64Data && updated.user?.email) {
           await transporter.sendMail({
             from: process.env.EMAIL_ID,
             to: updated.user.email,
@@ -901,19 +831,21 @@ router.put(
               },
             ],
           });
-        } catch (emailErr) {
-          console.error("Failed to send package email:", emailErr);
-          // Non-fatal: DB update succeeded
         }
+      } catch (emailErr) {
+        console.error("Failed to send package email:", emailErr);
       }
-
-      res.status(200).json({ status: "success", data: updated });
-    } catch (e) {
-      console.error(e);
-      res.status(400).json({ error: e.message });
     }
-  },
-);
+
+    return res.status(200).json({ status: "success", data: updated });
+  } catch (e) {
+    console.error("Package update error:", e);
+    return res.status(400).json({ error: e.message });
+  }
+};
+
+router.patch("/packages/:id", checkFeature("DELIVERY_MANAGEMENT"), handlePackageUpdate);
+router.put("/packages/:id", checkFeature("DELIVERY_MANAGEMENT"), handlePackageUpdate);
 
 router.get("/residents", async (req, res) => {
   const { communityId } = req.query;
@@ -1069,11 +1001,15 @@ router.get(
   "/vehicle-search",
   checkFeature("VEHICLE_SEARCH"),
   async (req, res) => {
-    const { vehicleNo, communityId } = req.query;
+    const vehicleNo = req.query.vehicleNo;
+    const communityId = req.user?.communityId || req.query.communityId;
     if (!vehicleNo || !communityId) {
       return res
         .status(400)
         .json({ error: "vehicleNo and communityId are required" });
+    }
+    if (req.query.communityId && req.user?.communityId && req.query.communityId !== req.user.communityId) {
+      return res.status(403).json({ error: "Forbidden: Access to other communities denied" });
     }
     const q = vehicleNo.trim().toUpperCase();
     try {

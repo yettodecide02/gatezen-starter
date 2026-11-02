@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import express from "express";
 import prisma from "../../../lib/prisma.js";
 import {
@@ -7,10 +8,27 @@ import {
 
 const router = express.Router();
 
+function safeCronSecretCompare(provided, expected) {
+  if (!provided || !expected) return false;
+  const pBuf = Buffer.from(provided);
+  const eBuf = Buffer.from(expected);
+  if (pBuf.length !== eBuf.length) return false;
+  return crypto.timingSafeEqual(pBuf, eBuf);
+}
+
+// Track notified booking IDs to guarantee idempotency across sliding windows
+const notifiedBookings = new Set();
+if (typeof setInterval !== "undefined") {
+  setInterval(() => {
+    // Clear once daily to release memory
+    notifiedBookings.clear();
+  }, 24 * 60 * 60 * 1000).unref?.();
+}
+
 /**
  * GET /cron/booking-reminder
  * Called every minute by Vercel Cron (or an external scheduler).
- * Notifies residents whose facility booking starts within the next 10 minutes.
+ * Notifies residents whose facility booking starts within the next 15 minutes.
  * Protected by a shared secret so only the scheduler can call it.
  */
 router.get("/booking-reminder", async (req, res) => {
@@ -21,21 +39,20 @@ router.get("/booking-reminder", async (req, res) => {
     : null;
   const secret =
     bearerSecret || req.headers["x-cron-secret"] || req.query.secret;
-  if (secret !== process.env.CRON_SECRET) {
+  if (!safeCronSecretCompare(secret, process.env.CRON_SECRET)) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
   try {
     const now = new Date();
-    const windowEnd = new Date(now.getTime() + 10 * 60 * 1000); // 10 min from now
-    const windowStart = new Date(now.getTime() + 9 * 60 * 1000); // 9 min from now (1-min window to avoid double-sending)
+    const windowEnd = new Date(now.getTime() + 15 * 60 * 1000); // 15 min lookahead
 
-    // Find confirmed bookings starting in the 9-10 minute window
+    // Find confirmed bookings starting in the next 15 minutes that haven't been notified yet
     const bookings = await prisma.booking.findMany({
       where: {
         status: "CONFIRMED",
         startsAt: {
-          gte: windowStart,
+          gte: now,
           lte: windowEnd,
         },
       },
@@ -47,15 +64,20 @@ router.get("/booking-reminder", async (req, res) => {
 
     let sent = 0;
     for (const booking of bookings) {
+      if (notifiedBookings.has(booking.id)) {
+        continue;
+      }
+
       if (booking.user?.pushToken) {
         await sendPushNotification(
           booking.user.pushToken,
           "⏰ Booking Starting Soon",
-          `Your ${booking.facility.name} booking starts in 10 minutes`,
+          `Your ${booking.facility.name} booking starts soon!`,
           { type: "BOOKING_REMINDER", bookingId: booking.id },
         );
         sent++;
       }
+      notifiedBookings.add(booking.id);
     }
 
     return res.status(200).json({ ok: true, sent });
@@ -78,7 +100,7 @@ router.post("/check-receipts", async (req, res) => {
     : null;
   const secret =
     bearerSecret || req.headers["x-cron-secret"] || req.query.secret;
-  if (secret !== process.env.CRON_SECRET) {
+  if (!safeCronSecretCompare(secret, process.env.CRON_SECRET)) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 

@@ -84,6 +84,71 @@ router.get("/dashboard", async (req, res) => {
   }
 });
 
+router.get("/my-unit-info", async (req, res) => {
+  try {
+    const { unitId, communityId } = req.user;
+
+    const [unit, residents, ownershipGroup] = await Promise.all([
+      prisma.unit.findFirst({
+        where: { id: unitId, communityId },
+        select: { id: true, number: true, maxResidents: true },
+      }),
+      prisma.user.findMany({
+        where: {
+          unitId,
+          communityId,
+          role: "RESIDENT",
+        },
+        select: {
+          id: true,
+          name: true,
+          residentSubtype: true,
+          isPrimaryContact: true,
+          residencyGroupId: true,
+          residentStatus: true,
+          isMinor: true,
+        },
+        orderBy: { createdAt: "asc" },
+      }),
+      prisma.residencyGroup.findFirst({
+        where: {
+          unitId,
+          communityId,
+          groupType: "OWNERSHIP",
+          dissolvedAt: null,
+        },
+        select: {
+          id: true,
+          name: true,
+          groupType: true,
+          primaryResidentId: true,
+        },
+      }),
+    ]);
+
+    if (!unit) {
+      return res.status(404).json({ error: "Unit not found" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        unit,
+        residents,
+        ownershipGroup,
+        slots: {
+          used: residents.length,
+          total: unit.maxResidents,
+          remaining: unit.maxResidents - residents.length,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("Error fetching resident unit info:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // Maintenance routes for residents
 router.get("/maintenance", checkFeature("HELPDESK"), async (req, res) => {
   try {
@@ -772,7 +837,7 @@ router.post("/bookings", checkFeature("AMENITY_BOOKING"), async (req, res) => {
 
     // Prevent booking in the past
     const now = new Date();
-    if (start.toDateString() === now.toDateString() && start < now) {
+    if (start < now) {
       return res.status(400).json({ error: "Cannot book a slot in the past" });
     }
 
@@ -845,61 +910,75 @@ router.post("/bookings", checkFeature("AMENITY_BOOKING"), async (req, res) => {
       });
     }
 
-    // Find all bookings for this slot using the actual facility ID
-    const overlapping = await prisma.booking.findMany({
-      where: {
-        facilityId: actualFacility.id,
-        status: "CONFIRMED",
-        startsAt: { equals: start },
-        endsAt: { equals: end },
-      },
-    });
-
-    const totalPeople =
-      overlapping.reduce((sum, b) => sum + (b.peopleCount || 1), 0) +
-      (peopleCount || 1);
-    if (totalPeople > actualFacility.capacity) {
-      return res.status(400).json({
-        error: `This slot is full. Max allowed: ${actualFacility.capacity}`,
+    let errorResponse = null;
+    const created = await prisma.$transaction(async (tx) => {
+      // Find all bookings for this slot using the actual facility ID
+      const overlapping = await tx.booking.findMany({
+        where: {
+          facilityId: actualFacility.id,
+          status: "CONFIRMED",
+          startsAt: { equals: start },
+          endsAt: { equals: end },
+        },
       });
-    }
 
-    // Prevent partial overlaps (no booking can overlap a slot unless it's for the exact same slot)
-    const partialOverlap = await prisma.booking.findFirst({
-      where: {
-        facilityId: actualFacility.id,
-        status: "CONFIRMED",
-        OR: [
-          {
-            startsAt: { lt: end },
-            endsAt: { gt: start },
-            NOT: [{ startsAt: { equals: start }, endsAt: { equals: end } }],
-          },
-        ],
-      },
-    });
-    if (partialOverlap) {
-      return res.status(409).json({
-        error: "Time slot conflict: partial overlap with another booking.",
+      const totalPeople =
+        overlapping.reduce((sum, b) => sum + (b.peopleCount || 1), 0) +
+        (peopleCount || 1);
+      if (totalPeople > actualFacility.capacity) {
+        errorResponse = {
+          status: 400,
+          message: `This slot is full. Max allowed: ${actualFacility.capacity}`,
+        };
+        throw new Error("SLOT_FULL");
+      }
+
+      // Prevent partial overlaps (no booking can overlap a slot unless it's for the exact same slot)
+      const partialOverlap = await tx.booking.findFirst({
+        where: {
+          facilityId: actualFacility.id,
+          status: "CONFIRMED",
+          OR: [
+            {
+              startsAt: { lt: end },
+              endsAt: { gt: start },
+              NOT: [{ startsAt: { equals: start }, endsAt: { equals: end } }],
+            },
+          ],
+        },
       });
-    }
+      if (partialOverlap) {
+        errorResponse = {
+          status: 409,
+          message: "Time slot conflict: partial overlap with another booking.",
+        };
+        throw new Error("SLOT_CONFLICT");
+      }
 
-    const created = await prisma.booking.create({
-      data: {
-        userId,
-        facilityId: actualFacility.id, // Use the actual facility ID
-        startsAt: start,
-        endsAt: end,
-        note,
-        status: "CONFIRMED",
-        peopleCount: peopleCount || 1,
-        communityId,
-      },
-      include: {
-        facility: { select: { name: true } },
-        user: { select: { name: true } },
-      },
+      return await tx.booking.create({
+        data: {
+          userId,
+          facilityId: actualFacility.id, // Use the actual facility ID
+          startsAt: start,
+          endsAt: end,
+          note,
+          status: "CONFIRMED",
+          peopleCount: peopleCount || 1,
+          communityId,
+        },
+        include: {
+          facility: { select: { name: true } },
+          user: { select: { name: true } },
+        },
+      });
+    }).catch((txErr) => {
+      if (errorResponse) return null;
+      throw txErr;
     });
+
+    if (errorResponse) {
+      return res.status(errorResponse.status).json({ error: errorResponse.message });
+    }
 
     res.status(201).json({ ...created, status: "confirmed" });
   } catch (err) {
@@ -1726,7 +1805,7 @@ router.get("/polls/", checkFeature("ELECTION_POLLS"), async (req, res) => {
 });
 
 // ─── GET single poll ────────────────────────────────────────
-router.get("/polls/:id", async (req, res) => {
+router.get("/polls/:id", checkFeature("ELECTION_POLLS"), async (req, res) => {
   try {
     const { communityId, id: userId } = req.user;
     const { id } = req.params;
@@ -2234,33 +2313,47 @@ router.post(
         });
       }
 
-      const spot = await prisma.parkingSpot.findFirst({
-        where: { id: spotId, communityId, isAvailable: true },
+      let spotUnavailable = false;
+      const booking = await prisma.$transaction(async (tx) => {
+        const spot = await tx.parkingSpot.findFirst({
+          where: { id: spotId, communityId, isAvailable: true },
+        });
+        if (!spot) {
+          spotUnavailable = true;
+          throw new Error("Parking spot not found or unavailable");
+        }
+
+        const createdBooking = await tx.parkingBooking.create({
+          data: {
+            spotId,
+            userId,
+            communityId,
+            fromDate: new Date(fromDate),
+            toDate: new Date(toDate),
+            status: "ACTIVE",
+          },
+          include: {
+            spot: { select: { spotNumber: true, spotType: true } },
+          },
+        });
+
+        // Mark spot unavailable
+        await tx.parkingSpot.update({
+          where: { id: spotId },
+          data: { isAvailable: false },
+        });
+
+        return createdBooking;
+      }).catch((txErr) => {
+        if (spotUnavailable) return null;
+        throw txErr;
       });
-      if (!spot)
+
+      if (spotUnavailable || !booking) {
         return res
           .status(404)
           .json({ error: "Parking spot not found or unavailable" });
-
-      const booking = await prisma.parkingBooking.create({
-        data: {
-          spotId,
-          userId,
-          communityId,
-          fromDate: new Date(fromDate),
-          toDate: new Date(toDate),
-          status: "ACTIVE",
-        },
-        include: {
-          spot: { select: { spotNumber: true, spotType: true } },
-        },
-      });
-
-      // Mark spot unavailable
-      await prisma.parkingSpot.update({
-        where: { id: spotId },
-        data: { isAvailable: false },
-      });
+      }
 
       res.status(201).json({ booking });
     } catch (error) {
@@ -2304,6 +2397,23 @@ router.patch(
 
 // ── Overstay (resident view of their visitors) ─────────────────
 router.get(
+  "/overstay-limits",
+  checkFeature("VISITOR_MANAGEMENT"),
+  async (req, res) => {
+    try {
+      const community = await prisma.community.findUnique({
+        where: { id: req.user.communityId },
+        select: { overstayLimits: true },
+      });
+      res.json({ overstayLimits: community?.overstayLimits || {} });
+    } catch (error) {
+      console.error("Error fetching overstay limits:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  },
+);
+
+router.get(
   "/overstay",
   checkFeature("VISITOR_MANAGEMENT"),
   async (req, res) => {
@@ -2338,6 +2448,10 @@ router.get(
 
 // ── Notice board mutations (resident) ──────────────────────────
 router.post("/notice-board", checkFeature("NOTICE_BOARD"), async (req, res) => {
+  if (req.user.role !== "ADMIN") {
+    return res.status(403).json({ success: false, message: "Forbidden: Admin privileges required" });
+  }
+
   try {
     const { title, content, category, isPinned } = req.body;
     if (!title || !content) {
@@ -2367,6 +2481,10 @@ router.delete(
   "/notice-board/:id",
   checkFeature("NOTICE_BOARD"),
   async (req, res) => {
+    if (req.user.role !== "ADMIN") {
+      return res.status(403).json({ success: false, message: "Forbidden: Admin privileges required" });
+    }
+
     try {
       const { id } = req.params;
       const existing = await prisma.notice.findFirst({
@@ -2390,6 +2508,10 @@ router.delete(
 
 // ── Survey mutations (resident — for admin-level residents) ────
 router.post("/surveys", checkFeature("SURVEYS"), async (req, res) => {
+  if (req.user.role !== "ADMIN") {
+    return res.status(403).json({ success: false, message: "Forbidden: Admin privileges required" });
+  }
+
   try {
     const { title, description, startDate, endDate, questions } = req.body;
     if (!title || !endDate || !questions || !questions.length) {
@@ -2427,6 +2549,10 @@ router.post("/surveys", checkFeature("SURVEYS"), async (req, res) => {
 });
 
 router.delete("/surveys/:id", checkFeature("SURVEYS"), async (req, res) => {
+  if (req.user.role !== "ADMIN") {
+    return res.status(403).json({ success: false, message: "Forbidden: Admin privileges required" });
+  }
+
   try {
     const { id } = req.params;
     const existing = await prisma.survey.findFirst({
@@ -2449,6 +2575,9 @@ router.delete("/surveys/:id", checkFeature("SURVEYS"), async (req, res) => {
 
 // ── Poll mutations (resident) ──────────────────────────────────
 router.post("/polls", checkFeature("ELECTION_POLLS"), async (req, res) => {
+  if (req.user.role !== "ADMIN") {
+    return res.status(403).json({ success: false, message: "Forbidden: Admin privileges required" });
+  }
   try {
     const { title, description, startDate, endDate, candidates } = req.body;
     if (!title || !endDate || !candidates || candidates.length < 2) {

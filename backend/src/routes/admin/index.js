@@ -10,12 +10,22 @@ import {
   sendPushNotification,
   sendBulkPushNotifications,
 } from "../../../lib/notifications.js";
+import {
+  ResidentValidationError,
+  validateMinorGuardian,
+  validateResidentCreation,
+  validateTenantFields,
+} from "../../../lib/residentValidation.js";
+import { hashPassword } from "../../../lib/passwords.js";
 
 const router = express.Router();
 router.use(authMiddleware);
 router.use(checkAuth);
 
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit (CAN-018)
+});
 
 function checkAuth(req, res, next) {
   if (req.user.role !== "ADMIN") {
@@ -31,6 +41,31 @@ const transporter = nodemailer.createTransport({
     pass: process.env.EMAIL_PASSWORD,
   },
 });
+
+async function notifyUnitResidents(unitId, newResidentId, communityId) {
+  const residents = await prisma.user.findMany({
+    where: {
+      unitId,
+      communityId,
+      role: "RESIDENT",
+      id: { not: newResidentId },
+      pushToken: { not: null },
+    },
+    select: { pushToken: true },
+  });
+
+  const tokens = residents
+    .map((resident) => resident.pushToken)
+    .filter(Boolean);
+  if (!tokens.length) return;
+
+  await sendBulkPushNotifications(
+    tokens,
+    "New resident added to your unit",
+    "A new resident has been added to your unit.",
+    { type: "NEW_RESIDENT", unitId, residentId: newResidentId },
+  );
+}
 
 router.get("/dashboard", async (req, res) => {
   try {
@@ -310,7 +345,7 @@ router.post("/approve-resident", async (req, res) => {
 
     const updatedUser = await prisma.user.update({
       where: { id: userId },
-      data: { status: "APPROVED" },
+      data: { status: "APPROVED", residentStatus: "ACTIVE" },
       select: { id: true, name: true, email: true, status: true },
     });
 
@@ -344,7 +379,7 @@ router.post("/reject-resident", async (req, res) => {
 
     const updatedUser = await prisma.user.update({
       where: { id: userId },
-      data: { status: "REJECTED" },
+      data: { status: "REJECTED", residentStatus: "INACTIVE" },
       select: { id: true, name: true, email: true, status: true },
     });
 
@@ -383,6 +418,10 @@ router.get("/residents", async (req, res) => {
         email: true,
         role: true,
         status: true,
+        residentSubtype: true,
+        residentStatus: true,
+        isPrimaryContact: true,
+        residencyGroupId: true,
         unitId: true,
         createdAt: true,
         unit: {
@@ -1109,6 +1148,7 @@ router.post("/units/:unitId/assign-resident", async (req, res) => {
     // Verify unit exists and belongs to this admin's community
     const unit = await prisma.unit.findFirst({
       where: { id: unitId, communityId: req.user.communityId },
+      select: { id: true, communityId: true, maxResidents: true },
     });
 
     if (!unit) {
@@ -1128,15 +1168,29 @@ router.post("/units/:unitId/assign-resident", async (req, res) => {
         .json({ error: "Resident not found in this community" });
     }
 
+    const residentCount = await prisma.user.count({
+      where: {
+        unitId,
+        communityId: req.user.communityId,
+        role: "RESIDENT",
+        id: { not: userId },
+      },
+    });
+
+    if (residentCount >= unit.maxResidents) {
+      return res.status(409).json({ error: "Unit is at resident capacity" });
+    }
+
     // Update user's unit assignment
     const updatedUser = await prisma.user.update({
       where: { id: userId },
-      data: { unitId },
+      data: { unitId, residentStatus: "ACTIVE" },
       select: {
         id: true,
         name: true,
         email: true,
         status: true,
+        residentStatus: true,
         unitId: true,
         unit: {
           select: {
@@ -1199,7 +1253,12 @@ router.post("/units/:unitId/remove-resident", async (req, res) => {
     // Remove unit assignment
     const updatedUser = await prisma.user.update({
       where: { id: userId },
-      data: { unitId: null },
+      data: {
+        unitId: null,
+        residencyGroupId: null,
+        isPrimaryContact: false,
+        residentStatus: "INACTIVE",
+      },
       select: {
         id: true,
         name: true,
@@ -1216,6 +1275,433 @@ router.post("/units/:unitId/remove-resident", async (req, res) => {
   } catch (e) {
     console.error("Error removing resident from unit:", e);
     res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.post("/member", async (req, res) => {
+  try {
+    const {
+      name,
+      email,
+      password,
+      phone,
+      role = "RESIDENT",
+      unitId,
+      blockId,
+      residentSubtype,
+      residencyGroupId,
+      groupName,
+      isMinor = false,
+      guardianId,
+      leaseStartDate,
+      leaseEndDate,
+    } = req.body;
+
+    const communityId = req.user.communityId;
+    const normalizedRole = String(role || "").toUpperCase();
+
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        code: "MISSING_FIELDS",
+        error: "name, email, and password are required",
+      });
+    }
+
+    if (
+      !["RESIDENT", "ADMIN", "GATEKEEPER", "STAFF"].includes(normalizedRole)
+    ) {
+      return res.status(400).json({
+        success: false,
+        code: "INVALID_ROLE",
+        error: "Invalid role",
+      });
+    }
+
+    if (normalizedRole === "RESIDENT") {
+      if (!unitId) {
+        return res.status(400).json({
+          success: false,
+          code: "UNIT_REQUIRED",
+          error: "unitId is required for RESIDENT role",
+        });
+      }
+
+      if (!residentSubtype) {
+        return res.status(400).json({
+          success: false,
+          code: "SUBTYPE_REQUIRED",
+          error: "residentSubtype is required for RESIDENT role",
+        });
+      }
+
+      if (residentSubtype === "TENANT") {
+        try {
+          validateTenantFields({ leaseStartDate, leaseEndDate });
+        } catch (err) {
+          return res.status(err.statusCode || 400).json({
+            success: false,
+            code: err.code,
+            error: err.message,
+          });
+        }
+      }
+    }
+
+    const createdMember = await prisma.$transaction(async (tx) => {
+      let resolvedResidencyGroupId = null;
+      let createdOwnershipGroupId = null;
+
+      if (normalizedRole === "RESIDENT") {
+        await validateMinorGuardian(tx, {
+          isMinor: Boolean(isMinor),
+          guardianId,
+          unitId,
+          communityId,
+        });
+
+        const validation = await validateResidentCreation(tx, {
+          unitId,
+          communityId,
+          residentSubtype,
+          residencyGroupId,
+        });
+
+        resolvedResidencyGroupId = validation.residencyGroupId || null;
+
+        if (residentSubtype === "OWNER") {
+          if (!validation.ownershipGroup) {
+            if (residencyGroupId) {
+              const requestedGroup = await tx.residencyGroup.findFirst({
+                where: {
+                  id: residencyGroupId,
+                  unitId,
+                  communityId,
+                  groupType: "OWNERSHIP",
+                  dissolvedAt: null,
+                },
+                select: { id: true },
+              });
+
+              if (!requestedGroup) {
+                throw Object.assign(new Error("Residency group not found"), {
+                  statusCode: 404,
+                  code: "GROUP_NOT_FOUND",
+                });
+              }
+
+              resolvedResidencyGroupId = requestedGroup.id;
+            } else {
+              const newGroup = await tx.residencyGroup.create({
+                data: {
+                  communityId,
+                  unitId,
+                  groupType: "OWNERSHIP",
+                  name: groupName?.trim() || null,
+                },
+                select: { id: true },
+              });
+
+              resolvedResidencyGroupId = newGroup.id;
+              createdOwnershipGroupId = newGroup.id;
+            }
+          }
+        }
+      }
+
+      const member = await tx.user.create({
+        data: {
+          name,
+          email,
+          password: hashPassword(password),
+          phone: phone || null,
+          role: normalizedRole,
+          status: "APPROVED",
+          communityId,
+          unitId:
+            normalizedRole === "RESIDENT" ? unitId || null : unitId || null,
+          residentSubtype:
+            normalizedRole === "RESIDENT" ? residentSubtype || null : null,
+          residencyGroupId:
+            normalizedRole === "RESIDENT" ? resolvedResidencyGroupId : null,
+          isMinor: normalizedRole === "RESIDENT" ? Boolean(isMinor) : false,
+          guardianId:
+            normalizedRole === "RESIDENT" && isMinor
+              ? guardianId || null
+              : null,
+          leaseStartDate:
+            normalizedRole === "RESIDENT" && residentSubtype === "TENANT"
+              ? new Date(leaseStartDate)
+              : null,
+          leaseEndDate:
+            normalizedRole === "RESIDENT" && residentSubtype === "TENANT"
+              ? new Date(leaseEndDate)
+              : null,
+          isPrimaryContact: Boolean(createdOwnershipGroupId),
+          residentStatus: "ACTIVE",
+          addedById: req.user.id,
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          status: true,
+          residentSubtype: true,
+          residentStatus: true,
+          residencyGroupId: true,
+          isPrimaryContact: true,
+          unitId: true,
+          createdAt: true,
+        },
+      });
+
+      if (createdOwnershipGroupId) {
+        await tx.residencyGroup.update({
+          where: { id: createdOwnershipGroupId },
+          data: { primaryResidentId: member.id },
+        });
+      }
+
+      return member;
+    });
+
+    if (createdMember.unitId) {
+      notifyUnitResidents(
+        createdMember.unitId,
+        createdMember.id,
+        communityId,
+      ).catch((err) => console.error("notifyUnitResidents error:", err));
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: "Member created successfully",
+      member: createdMember,
+    });
+  } catch (err) {
+    if (err instanceof ResidentValidationError || err.statusCode) {
+      return res.status(err.statusCode || 400).json({
+        success: false,
+        code: err.code,
+        error: err.message,
+        ...(err.meta || {}),
+      });
+    }
+
+    if (err?.code === "P2002") {
+      return res.status(409).json({
+        success: false,
+        code: "DUPLICATE_MEMBER",
+        error: "A member with this email already exists",
+      });
+    }
+
+    console.error("Error creating member:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: "Internal server error" });
+  }
+});
+
+router.get("/unit/:unitId/residency-info", async (req, res) => {
+  try {
+    const { unitId } = req.params;
+    const communityId = req.user.communityId;
+
+    const [unit, ownershipGroup, residents] = await Promise.all([
+      prisma.unit.findFirst({
+        where: { id: unitId, communityId },
+        select: { id: true, number: true, maxResidents: true },
+      }),
+      prisma.residencyGroup.findFirst({
+        where: {
+          unitId,
+          communityId,
+          groupType: "OWNERSHIP",
+          dissolvedAt: null,
+        },
+        select: {
+          id: true,
+          name: true,
+          groupType: true,
+          primaryResidentId: true,
+          members: {
+            where: { role: "RESIDENT" },
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              residentSubtype: true,
+              isPrimaryContact: true,
+              isMinor: true,
+              residentStatus: true,
+            },
+          },
+        },
+      }),
+      prisma.user.findMany({
+        where: {
+          unitId,
+          communityId,
+          role: "RESIDENT",
+          status: { not: "REJECTED" },
+          residentStatus: { not: "INACTIVE" },
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          residentSubtype: true,
+          isPrimaryContact: true,
+          leaseStartDate: true,
+          leaseEndDate: true,
+          isMinor: true,
+          residencyGroupId: true,
+          residentStatus: true,
+        },
+        orderBy: { createdAt: "asc" },
+      }),
+    ]);
+
+    if (!unit) {
+      return res.status(404).json({ success: false, error: "Unit not found" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        unit,
+        ownershipGroup,
+        residents,
+        slots: {
+          used: residents.length,
+          total: unit.maxResidents,
+          remaining: unit.maxResidents - residents.length,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("Error fetching unit residency info:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: "Internal server error" });
+  }
+});
+
+router.patch("/residency-group/:groupId/primary-contact", async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const { newPrimaryId } = req.body;
+    const communityId = req.user.communityId;
+
+    if (!newPrimaryId) {
+      return res.status(400).json({
+        success: false,
+        error: "newPrimaryId is required",
+      });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const group = await tx.residencyGroup.findFirst({
+        where: {
+          id: groupId,
+          communityId,
+          dissolvedAt: null,
+        },
+      });
+
+      if (!group) {
+        throw Object.assign(new Error("Group not found"), {
+          statusCode: 404,
+          code: "GROUP_NOT_FOUND",
+        });
+      }
+
+      const newPrimary = await tx.user.findFirst({
+        where: {
+          id: newPrimaryId,
+          residencyGroupId: groupId,
+          communityId,
+          role: "RESIDENT",
+        },
+        select: { id: true },
+      });
+
+      if (!newPrimary) {
+        throw Object.assign(
+          new Error("New primary must be an active member of this group"),
+          { statusCode: 400, code: "INVALID_PRIMARY_CONTACT" },
+        );
+      }
+
+      await tx.user.updateMany({
+        where: { residencyGroupId: groupId, communityId, role: "RESIDENT" },
+        data: { isPrimaryContact: false },
+      });
+
+      await tx.user.update({
+        where: { id: newPrimaryId },
+        data: { isPrimaryContact: true },
+      });
+
+      await tx.residencyGroup.update({
+        where: { id: groupId },
+        data: { primaryResidentId: newPrimaryId },
+      });
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Primary contact updated",
+    });
+  } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
+        success: false,
+        code: err.code,
+        error: err.message,
+      });
+    }
+
+    console.error("Error updating primary contact:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: "Internal server error" });
+  }
+});
+
+router.delete("/residency-group/:groupId", async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const communityId = req.user.communityId;
+
+    const group = await prisma.residencyGroup.findFirst({
+      where: { id: groupId, communityId, dissolvedAt: null },
+      select: { id: true },
+    });
+
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        error: "Active group not found",
+      });
+    }
+
+    await prisma.residencyGroup.update({
+      where: { id: groupId },
+      data: { dissolvedAt: new Date(), primaryResidentId: null },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Residency group dissolved",
+    });
+  } catch (err) {
+    console.error("Error dissolving residency group:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: "Internal server error" });
   }
 });
 
@@ -1302,19 +1788,33 @@ router.post("/community", async (req, res) => {
         },
       });
 
-      // Delete existing facility configurations and their associated facilities
+      // Delete existing facility configurations and their associated facilities, preserving facilities with bookings
       const existingConfigs = await prisma.facilityConfiguration.findMany({
         where: { communityId: community.id },
         select: { id: true },
       });
 
-      // Delete actual facilities first (due to foreign key constraints)
+      const facilitiesWithBookings = await prisma.booking.findMany({
+        where: { communityId: community.id },
+        select: { facilityId: true },
+        distinct: ["facilityId"],
+      });
+      const protectedFacilityIds = facilitiesWithBookings.map((b) => b.facilityId);
+
+      // Delete only actual facilities that have NO existing bookings to avoid cascading booking loss
       await prisma.facility.deleteMany({
         where: {
           configurationId: {
             in: existingConfigs.map((config) => config.id),
           },
+          id: { notIn: protectedFacilityIds },
         },
+      });
+
+      // Detach protected facilities from old configs before deleting configurations
+      await prisma.facility.updateMany({
+        where: { id: { in: protectedFacilityIds } },
+        data: { configurationId: null },
       });
 
       // Then delete facility configurations
@@ -1525,9 +2025,26 @@ router.post("/community/facilities", async (req, res) => {
 
     // Begin transaction to ensure consistency
     await prisma.$transaction(async (tx) => {
-      // Delete existing facilities and configurations
-      await tx.facility.deleteMany({
+      // Find facilities with existing bookings to protect them from deletion
+      const facilitiesWithBookings = await tx.booking.findMany({
         where: { communityId: community.id },
+        select: { facilityId: true },
+        distinct: ["facilityId"],
+      });
+      const protectedFacilityIds = facilitiesWithBookings.map((b) => b.facilityId);
+
+      // Delete only facilities that have no bookings
+      await tx.facility.deleteMany({
+        where: {
+          communityId: community.id,
+          id: { notIn: protectedFacilityIds },
+        },
+      });
+
+      // Detach protected facilities from old configs before deleting configurations
+      await tx.facility.updateMany({
+        where: { id: { in: protectedFacilityIds } },
+        data: { configurationId: null },
       });
 
       await tx.facilityConfiguration.deleteMany({
@@ -3166,11 +3683,21 @@ router.post("/residents/:userId/action", async (req, res) => {
   }
 
   try {
+    const targetUser = await prisma.user.findFirst({
+      where: { id: userId, communityId: req.user.communityId },
+    });
+    if (!targetUser) {
+      return res
+        .status(404)
+        .json({ error: "Resident not found in your community" });
+    }
+
     const status = action === "approve" ? "APPROVED" : "REJECTED";
+    const residentStatus = action === "approve" ? "ACTIVE" : "INACTIVE";
     const updatedUser = await prisma.user.update({
       where: { id: userId },
-      data: { status },
-      select: { id: true, name: true, email: true, status: true },
+      data: { status, residentStatus },
+      select: { id: true, name: true, email: true, status: true, residentStatus: true },
     });
 
     const subject =
@@ -3289,10 +3816,26 @@ router.patch(
   checkFeature("AMENITY_BOOKING"),
   async (req, res) => {
     const { bookingId } = req.params;
+    const { status, note, peopleCount } = req.body;
+
     try {
+      const existing = await prisma.booking.findFirst({
+        where: { id: bookingId, communityId: req.user.communityId },
+      });
+      if (!existing) {
+        return res
+          .status(404)
+          .json({ error: "Booking not found in your community" });
+      }
+
+      const updateData = {};
+      if (status !== undefined) updateData.status = status;
+      if (note !== undefined) updateData.note = note;
+      if (peopleCount !== undefined) updateData.peopleCount = peopleCount;
+
       const booking = await prisma.booking.update({
         where: { id: bookingId },
-        data: req.body,
+        data: updateData,
         include: {
           user: { select: { name: true, email: true } },
           facility: { select: { name: true } },

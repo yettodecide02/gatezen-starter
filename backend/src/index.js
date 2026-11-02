@@ -15,6 +15,7 @@ import intercomRoutes from "./routes/intercom/index.js";
 import notificationsRoutes from "./routes/notifications/index.js";
 import cronRoutes from "./routes/cron/index.js";
 import superAdminRoutes from "./routes/superadmin/index.js";
+import emergencyRoutes from "./routes/emergency/index.js";
 
 import { limiter } from "./middleware/auth.js";
 
@@ -22,11 +23,12 @@ const app = express();
 
 app.use(
   cors({
-    allowedHeaders: ["Authorization", "Content-Type", "x-setup-secret"],
+    allowedHeaders: ["Authorization", "Content-Type", "x-setup-secret", "x-cron-secret"],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   }),
 );
-app.use(express.json());
+app.use(express.json({ limit: "15mb" }));
+app.use(express.urlencoded({ extended: true, limit: "15mb" }));
 app.use(limiter);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,7 +36,7 @@ const locationCountsFile = path.join(__dirname, "locations.json");
 const logFile = path.join(__dirname, "logs.txt");
 
 
-app.set("trust proxy", true); 
+app.set("trust proxy", 1); 
 
 const cache = new Map();
 const MAX_CACHE_SIZE = 1000;
@@ -165,6 +167,12 @@ app.use("/intercom", intercomRoutes);
 app.use("/notifications", notificationsRoutes);
 app.use("/cron", cronRoutes);
 app.use("/superadmin", superAdminRoutes);
+app.use("/emergency", emergencyRoutes);
+
+// 404 Fallback JSON handler
+app.use((req, res) => {
+  res.status(404).json({ error: "Route not found", path: req.originalUrl });
+});
 
 // Global error handler
 app.use((err, req, res, next) => {

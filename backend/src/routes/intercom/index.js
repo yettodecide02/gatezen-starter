@@ -52,13 +52,14 @@ router.get("/gatekeeper", async (req, res) => {
 router.post("/notify", async (req, res) => {
   const { receiverId, callerName, callId, callType, callerUnit, callerBlock } =
     req.body;
-  // Always use the authenticated user as the caller — never trust callerId from the body
+  // Always use the authenticated user as the caller — never trust callerId or callerName from the body
   const callerId = req.user.id;
+  const verifiedCallerName = req.user.name || "Resident";
 
-  if (!receiverId || !callerName || !callId) {
+  if (!receiverId || !callId) {
     return res
       .status(400)
-      .json({ error: "receiverId, callerName, and callId are required" });
+      .json({ error: "receiverId and callId are required" });
   }
 
   try {
@@ -82,13 +83,13 @@ router.post("/notify", async (req, res) => {
     await sendPushNotification(
       receiver.pushToken,
       "Incoming Call",
-      callerName,
+      verifiedCallerName,
       {
         type: "INTERCOM_CALL",
         callId,
         callType: callType ?? "R2G",
         callerId: callerId ?? "",
-        callerName,
+        callerName: verifiedCallerName,
         callerUnit: callerUnit ?? "",
         callerBlock: callerBlock ?? "",
       },
